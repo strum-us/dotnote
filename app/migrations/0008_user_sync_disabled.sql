@@ -1,1 +1,2 @@
+-- @since 0.2.0
 ALTER TABLE users ADD COLUMN sync_disabled INTEGER NOT NULL DEFAULT 0;
