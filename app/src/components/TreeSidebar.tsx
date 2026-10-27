@@ -33,6 +33,7 @@ import { NameDialog } from "@/components/NameDialog";
 import { SyncIndicator } from "@/components/SyncIndicator";
 import { UpdateBanner } from "@/components/update/UpdateBanner";
 import { sidebarTree } from "@/lib/tree-utils";
+import { TreeListSkeleton, TreeLoadFailed } from "@/components/WorkspaceLoading";
 
 type DialogState =
   | { kind: "folder"; parentId: string | null }
@@ -347,23 +348,29 @@ export const TreeSidebar = observer(function TreeSidebar({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto py-1">
-        {sidebarTree(workspaceStore.tree, sort).map((node) => (
-          <Row
-            key={node.id}
-            node={node}
-            depth={0}
-            selectedNoteId={selectedNoteId}
-            onPreviewNote={onPreviewNote}
-            onPermanentNote={onPermanentNote}
-            onAsk={setDialog}
-            onConfirm={setConfirm}
-            onAddNote={addNote}
-            onMove={setMoveTarget}
-            onDuplicate={duplicateNote}
-            workspaceId={workspaceId}
-            sort={sort}
-          />
-        ))}
+        {workspaceStore.treeLoadFailed ? (
+          <TreeLoadFailed onRetry={() => workspaceStore.retryTreeLoad()} />
+        ) : workspaceStore.treeLoading ? (
+          <TreeListSkeleton />
+        ) : (
+          sidebarTree(workspaceStore.tree, sort).map((node) => (
+            <Row
+              key={node.id}
+              node={node}
+              depth={0}
+              selectedNoteId={selectedNoteId}
+              onPreviewNote={onPreviewNote}
+              onPermanentNote={onPermanentNote}
+              onAsk={setDialog}
+              onConfirm={setConfirm}
+              onAddNote={addNote}
+              onMove={setMoveTarget}
+              onDuplicate={duplicateNote}
+              workspaceId={workspaceId}
+              sort={sort}
+            />
+          ))
+        )}
       </div>
       <UpdateBanner />
       <div className="flex shrink-0 items-center gap-2 px-3 pb-3 pt-2">

@@ -22,6 +22,8 @@ import { themeStore } from "@/stores/theme-store";
 import { uiPreferenceStore } from "@/stores/ui-preference-store";
 import { MARKDOWN_COLUMN_CLASS } from "@/components/MarkdownRawEditor";
 import { noteStore } from "@/stores/note-store";
+import { workspaceStore } from "@/stores/workspace-store";
+import { EditorContentSkeleton } from "@/components/WorkspaceLoading";
 
 export type MarkdownEditorHandle = {
   flushViewState(): void;
@@ -342,6 +344,9 @@ export const MarkdownEditor = observer(
     const notePath = noteId ? (pathForNoteId(noteId) ?? `${noteId}.md`) : null;
 
     if (!noteId || !notePath) {
+      if (workspaceStore.treeLoading || workspaceStore.booting) {
+        return <EditorContentSkeleton />;
+      }
       return <div className="flex flex-1 items-center justify-center text-sm text-dim">Select a note or create one.</div>;
     }
     if (noteStore.loadFailed) {
@@ -351,7 +356,7 @@ export const MarkdownEditor = observer(
         </div>
       );
     }
-    if (!noteStore.editorReady) return <div className="flex-1 bg-well" />;
+    if (!noteStore.editorReady) return <EditorContentSkeleton />;
 
     return (
       <BlockEditor

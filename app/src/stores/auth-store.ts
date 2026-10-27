@@ -66,6 +66,24 @@ class AuthStore {
     return this.bootPromise;
   }
 
+  /** Session from entry-sample (or similar): paint immediately, validate with /me in the background. */
+  primeUser(user: User): void {
+    writeCachedUser(user);
+    this.user = user;
+    this.booted = true;
+    void authApi.me().then(({ user: fresh }) => {
+      writeCachedUser(fresh);
+      runInAction(() => {
+        const same =
+          fresh?.id === this.user?.id &&
+          fresh?.fullName === this.user?.fullName &&
+          fresh?.email === this.user?.email &&
+          fresh?.syncDisabled === this.user?.syncDisabled;
+        if (!same) this.user = fresh;
+      });
+    }).catch(() => {});
+  }
+
   /** Boot from the remembered user so notes paint offline; the server check runs behind it. */
   private async loadMe(): Promise<void> {
     const cached = readCachedUser();

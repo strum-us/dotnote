@@ -24,6 +24,9 @@ import {
 /** `local`: changed here, not on the server yet. `syncing`: request in flight. */
 export type SyncState = "local" | "syncing" | "synced";
 
+/** Manifest snapshot load for a workspace (IndexedDB + server revalidate). */
+export type ManifestLoadState = "idle" | "loading" | "ready" | "error";
+
 export type SyncEvent =
   | { type: "noteSaved"; workspaceId: string; noteId: string; content: string; contentHash: string }
   | { type: "noteRenamed"; workspaceId: string; noteId: string; contentHash?: string }
@@ -42,7 +45,7 @@ function entityKey(workspaceId: string, id: string): string {
   return `${workspaceId}:${id}`;
 }
 
-function manifestCacheKey(workspaceId: string): string {
+export function manifestCacheKey(workspaceId: string): string {
   return `manifest:${workspaceId}`;
 }
 
@@ -67,10 +70,13 @@ class SyncStore {
   conflicts = observable.map<string, string>();
   /** The last request failed for a transient reason and the queue is backing off. */
   retrying = false;
+  /** Per-workspace manifest hydrate/revalidate (see `manifestLoadState`). */
+  baseLoadStates = observable.map<string, ManifestLoadState>();
   userId: string | null = null;
   syncDisabled = false;
 
   private seq = 0;
+  private baseRefreshInFlight = new Map<string, Promise<void>>();
   private pumping = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private persistChain: Promise<void> = Promise.resolve();
@@ -91,6 +97,7 @@ class SyncStore {
       | "tombstones"
       | "listeners"
       | "loadPromise"
+      | "baseRefreshInFlight"
     >(
       this,
       {
@@ -103,6 +110,7 @@ class SyncStore {
         tombstones: false,
         listeners: false,
         loadPromise: false,
+        baseRefreshInFlight: false,
       },
       { autoBind: true },
     );
@@ -175,6 +183,12 @@ class SyncStore {
 
   base(workspaceId: string): WorkspaceManifest | null {
     return this.bases.get(workspaceId) ?? null;
+  }
+
+  manifestLoadState(workspaceId: string | null): ManifestLoadState {
+    if (!workspaceId) return "idle";
+    if (this.bases.has(workspaceId)) return "ready";
+    return this.baseLoadStates.get(workspaceId) ?? "idle";
   }
 
   /** Server snapshot with this workspace's pending ops replayed on top. */
@@ -334,6 +348,7 @@ class SyncStore {
       if (key.startsWith(`${workspaceId}:`)) this.tombstones.delete(key);
     }
     void deleteCache(manifestCacheKey(workspaceId), "trees");
+    this.baseLoadStates.delete(workspaceId);
   }
 
   /** Settle a 409: resend local edits over the server copy, or drop them. */
@@ -355,26 +370,53 @@ class SyncStore {
 
   /** Paint from the cached snapshot. Leaves the base unset when nothing is cached. */
   async loadBase(workspaceId: string): Promise<void> {
-    if (this.bases.has(workspaceId)) return;
+    if (this.bases.has(workspaceId)) {
+      runInAction(() => this.baseLoadStates.set(workspaceId, "ready"));
+      return;
+    }
+    runInAction(() => this.baseLoadStates.set(workspaceId, "loading"));
     const cached = await readCache<WorkspaceManifest>(manifestCacheKey(workspaceId), "trees").catch(() => null);
     runInAction(() => {
       if (this.bases.has(workspaceId)) return;
-      if (cached) this.bases.set(workspaceId, cached);
-      else if (this.isLocalOnly(workspaceId, workspaceId)) this.bases.set(workspaceId, emptyManifest());
+      if (cached) {
+        this.bases.set(workspaceId, cached);
+        this.baseLoadStates.set(workspaceId, "ready");
+      } else if (this.isLocalOnly(workspaceId, workspaceId)) {
+        this.bases.set(workspaceId, emptyManifest());
+        this.baseLoadStates.set(workspaceId, "ready");
+      }
     });
   }
 
   /** Revalidate the snapshot against the server. Offline keeps the cached copy. */
-  async refreshBase(workspaceId: string): Promise<void> {
+  refreshBase(workspaceId: string): Promise<void> {
+    const existing = this.baseRefreshInFlight.get(workspaceId);
+    if (existing) return existing;
+    const promise = this.refreshBaseOnce(workspaceId).finally(() => {
+      this.baseRefreshInFlight.delete(workspaceId);
+    });
+    this.baseRefreshInFlight.set(workspaceId, promise);
+    return promise;
+  }
+
+  private async refreshBaseOnce(workspaceId: string): Promise<void> {
     if (this.isLocalOnly(workspaceId, workspaceId)) {
-      if (!this.bases.has(workspaceId)) this.setBase(workspaceId, emptyManifest());
+      runInAction(() => {
+        if (!this.bases.has(workspaceId)) this.setBase(workspaceId, emptyManifest());
+        else this.baseLoadStates.set(workspaceId, "ready");
+      });
       return;
     }
+    const hadBase = this.bases.has(workspaceId);
+    if (!hadBase) runInAction(() => this.baseLoadStates.set(workspaceId, "loading"));
     try {
       const { manifest } = await workspaceApi.manifest(workspaceId);
       runInAction(() => this.setBase(workspaceId, manifest));
     } catch {
-      /* keep the cached snapshot */
+      runInAction(() => {
+        if (this.bases.has(workspaceId)) this.baseLoadStates.set(workspaceId, "ready");
+        else this.baseLoadStates.set(workspaceId, "error");
+      });
     }
   }
 
@@ -382,6 +424,7 @@ class SyncStore {
     const current = this.bases.get(workspaceId);
     if (current && manifest.rev < current.rev) return;
     this.bases.set(workspaceId, manifest);
+    this.baseLoadStates.set(workspaceId, "ready");
     this.persistBase(workspaceId, true);
   }
 

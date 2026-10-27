@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { DotnoteMark } from "@/components/DotnoteMark";
 import { notePath } from "@/lib/note-route";
 import { entrySampleEnter, EntrySampleError } from "@/entry-sample/entry-sample-api";
+import { authStore } from "@/stores/auth-store";
 import type { ParsedEntrySamplePath } from "@/entry-sample/entry-sample-route";
 
 type Phase = "entering" | "failed";
@@ -31,8 +32,9 @@ export function EntrySamplePage({ hint }: { hint: ParsedEntrySamplePath }) {
   useEffect(() => {
     let cancelled = false;
     void entrySampleEnter()
-      .then(({ workspaceId }) => {
+      .then(({ user, workspaceId }) => {
         if (cancelled) return;
+        authStore.primeUser(user);
         window.location.replace(redirectTarget(workspaceId, hint));
       })
       .catch((error: unknown) => {

@@ -35,6 +35,7 @@ import { useBlockBrowserFileShortcuts } from "@/hooks/useBlockBrowserFileShortcu
 import { setRecentRecorder, setSearchNavigator } from "@/lib/search-nav";
 import { uiPreferenceStore } from "@/stores/ui-preference-store";
 import { cn } from "@/lib/utils";
+import { CenterLoading, TreeLoadFailed } from "@/components/WorkspaceLoading";
 
 const SIDEBAR_WIDTH = 240;
 
@@ -70,6 +71,7 @@ export const App = observer(function App() {
   const activeNoteId = tabsSession?.activeNoteId ?? null;
   const userId = authStore.user?.id ?? null;
   const treeReady = workspaceStore.treeReady;
+  const treeLoadFailed = workspaceStore.treeLoadFailed;
   const viewTree = workspaceStore.viewTree;
   const sidebarCollapsed = uiPreferenceStore.sidebarCollapsed;
 
@@ -355,6 +357,8 @@ export const App = observer(function App() {
                   }}
                   onWorkspaceDeleted={handleWorkspaceDeleted}
                 />
+              ) : treeLoadFailed ? (
+                <TreeLoadFailed onRetry={() => workspaceStore.retryTreeLoad()} />
               ) : (
                 <NoteEditor
                   workspaceId={workspaceId}
@@ -369,6 +373,8 @@ export const App = observer(function App() {
               )}
             </main>
           </>
+        ) : workspaceStore.booting ? (
+          <CenterLoading label="Loading workspace…" />
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3">
             <p className="text-sm text-dim">Create a workspace to start.</p>

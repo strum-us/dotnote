@@ -1,5 +1,5 @@
 import { makeAutoObservable, reaction, runInAction } from "mobx";
-import type { TreeNode, Workspace } from "@shared/types";
+import type { TreeNode, Workspace, WorkspaceManifest } from "@shared/types";
 import { buildTree, emptyManifest } from "@shared/manifest";
 import { displayEntryName, duplicateTitle, EMPTY_NOTE, replaceMarkdownTitle } from "@shared/title";
 import { noteApi, workspaceApi } from "@/lib/api";
@@ -17,7 +17,7 @@ import {
 } from "@/lib/tree-utils";
 import { noteStore } from "@/stores/note-store";
 import { noteTabsStore } from "@/stores/note-tabs-store";
-import { syncStore } from "@/stores/sync-store";
+import { manifestCacheKey, syncStore } from "@/stores/sync-store";
 import { parseNotePath } from "@/lib/note-route";
 import { uiPreferenceStore } from "@/stores/ui-preference-store";
 
@@ -29,6 +29,8 @@ let sharedTree: TreeNode[] = [];
 class WorkspaceStore {
   serverWorkspaces: Workspace[] = [];
   activeId: string | null = null;
+  /** True until the first workspace list + active tree snapshot are resolved for boot. */
+  booting = false;
   expanded = new Set<string>();
   /** Title of the note being typed, applied on top of the derived tree every keystroke. */
   liveTitle: { noteId: string; title: string } | null = null;
@@ -56,6 +58,15 @@ class WorkspaceStore {
   /** The active workspace's snapshot is in memory, so the tree is authoritative. */
   get treeReady(): boolean {
     return !!this.activeId && syncStore.ready && syncStore.bases.has(this.activeId);
+  }
+
+  get treeLoading(): boolean {
+    if (!this.activeId || !syncStore.ready || this.treeReady) return false;
+    return syncStore.manifestLoadState(this.activeId) !== "error";
+  }
+
+  get treeLoadFailed(): boolean {
+    return !!this.activeId && !this.treeReady && syncStore.manifestLoadState(this.activeId) === "error";
   }
 
   /** Server snapshot plus pending ops, rebuilt structurally and shared by reference. */
@@ -111,25 +122,92 @@ class WorkspaceStore {
 
   /** Paint from IndexedDB first, then revalidate workspaces and the tree in the background. */
   async boot(userId: string, syncDisabled = false): Promise<void> {
+    runInAction(() => {
+      this.booting = true;
+    });
     if (this.userId !== userId) {
       this.serverWorkspaces = [];
       this.activeId = null;
       this.liveTitle = null;
     }
     this.userId = userId;
-    const [cached] = await Promise.all([
+    const [cachedWorkspaces] = await Promise.all([
       readCache<Workspace[]>(`workspaces:${userId}`, "trees").catch(() => null),
       syncStore.start(userId, { syncDisabled }),
     ]);
+
+    const candidateId = this.resolveInitialWorkspaceId(cachedWorkspaces);
+    const cachedManifest =
+      candidateId && !syncStore.bases.has(candidateId)
+        ? await readCache<WorkspaceManifest>(manifestCacheKey(candidateId), "trees").catch(() => null)
+        : null;
+
     runInAction(() => {
-      if (cached && this.serverWorkspaces.length === 0) this.serverWorkspaces = cached;
+      if (cachedWorkspaces && this.serverWorkspaces.length === 0) this.serverWorkspaces = cachedWorkspaces;
+      if (candidateId && cachedManifest) syncStore.setBase(candidateId, cachedManifest);
       this.pickActive();
     });
-    if (this.activeId) {
-      await syncStore.loadBase(this.activeId);
-      void syncStore.refreshBase(this.activeId);
+
+    const activeId = this.activeId;
+    if (activeId && !syncStore.bases.has(activeId)) {
+      await syncStore.loadBase(activeId);
     }
-    await this.refreshWorkspaces();
+    if (activeId && !this.treeReady) {
+      await syncStore.refreshBase(activeId);
+    }
+
+    if (this.activeId) this.finishBootPhase();
+
+    void this.refreshWorkspaces().then(() => {
+      runInAction(() => {
+        if (!this.activeId) {
+          this.pickActive();
+        }
+      });
+      const ws = this.activeId;
+      if (ws && !syncStore.bases.has(ws)) {
+        return syncStore
+          .loadBase(ws)
+          .then(() => syncStore.refreshBase(ws))
+          .finally(() => this.finishBootAfterWorkspaceList());
+      }
+      this.finishBootAfterWorkspaceList();
+    });
+  }
+
+  retryTreeLoad(): void {
+    const ws = this.activeId;
+    if (!ws) return;
+    void syncStore.refreshBase(ws);
+  }
+
+  private finishBootPhase(): void {
+    runInAction(() => {
+      if (!this.activeId) return;
+      if (this.treeReady || this.treeLoadFailed) this.booting = false;
+    });
+  }
+
+  private finishBootAfterWorkspaceList(): void {
+    runInAction(() => {
+      if (!this.activeId) this.booting = false;
+      else if (this.treeReady || this.treeLoadFailed) this.booting = false;
+    });
+  }
+
+  /** Workspace to hydrate first: URL, then remembered id, then cached list. */
+  private resolveInitialWorkspaceId(cachedWorkspaces: Workspace[] | null): string | null {
+    if (this.activeId && this.workspaces.some((w) => w.id === this.activeId)) return this.activeId;
+    const fromUrl = typeof window !== "undefined" ? parseNotePath(window.location.pathname) : null;
+    if (fromUrl) return fromUrl.workspaceId;
+    let remembered: string | null = null;
+    try {
+      remembered = localStorage.getItem(ACTIVE_WORKSPACE_KEY);
+    } catch {
+      /* ignore */
+    }
+    if (remembered) return remembered;
+    return cachedWorkspaces?.[0]?.id ?? null;
   }
 
   async refreshWorkspaces(): Promise<void> {
@@ -155,7 +233,7 @@ class WorkspaceStore {
     if (this.activeId && this.workspaces.some((w) => w.id === this.activeId)) return;
     const fromUrl =
       typeof window !== "undefined" ? parseNotePath(window.location.pathname) : null;
-    if (fromUrl && this.workspaces.some((w) => w.id === fromUrl.workspaceId)) {
+    if (fromUrl) {
       this.activate(fromUrl.workspaceId);
       return;
     }
