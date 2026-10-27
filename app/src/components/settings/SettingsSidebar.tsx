@@ -1,4 +1,4 @@
-import { ArrowLeft, Cloud, Image, Info, Sparkles, UserRound } from "lucide-react";
+import { ArrowLeft, Cloud, Image, ImagePlus, Info, Sparkles, UserRound } from "lucide-react";
 
 import type { SettingsSection } from "@/lib/settings-section";
 import { cn } from "@/lib/utils";
@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 const workspaceItems: { id: SettingsSection; label: string; icon: typeof Info }[] = [
   { id: "general", label: "General", icon: Info },
   { id: "ai", label: "AI", icon: Sparkles },
+  { id: "ai-image", label: "AI Image", icon: ImagePlus },
   { id: "images", label: "Images", icon: Image },
   { id: "cloudflare", label: "Cloudflare", icon: Cloud },
 ];

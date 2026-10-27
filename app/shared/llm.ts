@@ -190,9 +190,45 @@ export function compactModelLabel(provider: LlmProviderId, modelId: string): str
 }
 
 /** What the client sees; raw keys never leave the Worker. */
+export const IMAGE_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4"] as const;
+export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
+
+export const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image";
+export const DEFAULT_IMAGE_ASPECT_RATIO: ImageAspectRatio = "16:9";
+
+export type ImageModelOption = {
+  id: string;
+  label: string;
+  notes?: string;
+};
+
+/** Gemini image models (AI Studio / free tier). */
+export const GEMINI_IMAGE_MODEL_CATALOG: ImageModelOption[] = [
+  {
+    id: "gemini-2.5-flash-image",
+    label: "Gemini 2.5 Flash Image",
+    notes: "Free tier · fast (Nano Banana)",
+  },
+  {
+    id: "gemini-3.1-flash-image",
+    label: "Gemini 3.1 Flash Image",
+    notes: "Higher quality · may require preview access",
+  },
+];
+
+export function findImageModel(modelId: string): ImageModelOption | undefined {
+  return GEMINI_IMAGE_MODEL_CATALOG.find((m) => m.id === modelId);
+}
+
+export function isImageAspectRatio(value: string): value is ImageAspectRatio {
+  return (IMAGE_ASPECT_RATIOS as readonly string[]).includes(value);
+}
+
 export type LlmSettingsView = {
   activeProvider: LlmProviderId;
   model: string;
+  imageModel: string;
+  imageAspectRatio: ImageAspectRatio;
   updatedAt: string | null;
   configuredProviders: Record<LlmProviderId, boolean>;
   maskedApiKeys: Partial<Record<LlmProviderId, string>>;
@@ -201,8 +237,17 @@ export type LlmSettingsView = {
 export type UpdateLlmSettings = {
   activeProvider?: LlmProviderId;
   model?: string;
+  imageModel?: string;
+  imageAspectRatio?: ImageAspectRatio;
   /** An empty string removes that provider's key. */
   apiKeys?: Partial<Record<LlmProviderId, string>>;
+};
+
+export type AiImageGenerateResponse = {
+  mimeType: string;
+  dataBase64: string;
+  /** Optional caption returned by the model alongside the image. */
+  caption?: string;
 };
 
 export type LlmChatMessage = { role: "user" | "assistant"; content: string };
