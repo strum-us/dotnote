@@ -5,6 +5,8 @@ import { cn } from '@/lib/utils';
 export interface FieldSelectOption {
   value: string;
   label: string;
+  /** Shown on the right in the dropdown only (not in the closed trigger). */
+  detail?: string;
 }
 
 export function FieldSelect({
@@ -31,7 +33,7 @@ export function FieldSelect({
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
+          <SelectItem key={option.value} value={option.value} detail={option.detail}>
             {option.label}
           </SelectItem>
         ))}

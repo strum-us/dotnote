@@ -166,6 +166,22 @@ export function findLlmModel(provider: LlmProviderId, modelId: string): LlmModel
   return LLM_MODEL_CATALOG[provider].find((m) => m.id === modelId);
 }
 
+function formatUsdPer1M(value: number): string {
+  const abs = Math.abs(value);
+  const digits = abs >= 1 ? (Number.isInteger(value) ? 0 : 2) : 2;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+/** Compact in/out pricing for model pickers, e.g. `$5 / $30`. */
+export function formatLlmModelPrice(model: Pick<LlmModelOption, "inputPer1MUsd" | "outputPer1MUsd">): string {
+  return `${formatUsdPer1M(model.inputPer1MUsd)} / ${formatUsdPer1M(model.outputPer1MUsd)}`;
+}
+
 /** Short label for chips, e.g. `Claude Opus 5.5` → `Opus 5.5`. */
 export function compactModelLabel(provider: LlmProviderId, modelId: string): string {
   const label = findLlmModel(provider, modelId)?.label;

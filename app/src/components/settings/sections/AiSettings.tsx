@@ -6,6 +6,7 @@ import {
   LLM_MODEL_CATALOG,
   LLM_PROVIDER_META,
   findLlmModel,
+  formatLlmModelPrice,
   getLlmProviderMeta,
   type LlmProviderId,
 } from "@shared/llm";
@@ -34,7 +35,7 @@ function formatUsd(value: number) {
   }).format(value);
 }
 
-const providerOptions = LLM_PROVIDER_META.map((p) => ({ value: p.id, label: p.name }));
+const allProviderOptions = LLM_PROVIDER_META.map((p) => ({ value: p.id, label: p.name }));
 
 export const AiSettings = observer(function AiSettings() {
   const settings = llmStore.settings;
@@ -49,14 +50,31 @@ export const AiSettings = observer(function AiSettings() {
     void llmStore.ensureLoaded();
   }, []);
 
+  const configured = llmStore.configuredProviders;
+  const configuredProviderOptions = configured.map((p) => ({ value: p.id, label: p.name }));
+
   useEffect(() => {
     if (!settings) return;
-    setActiveProvider(settings.activeProvider);
-    setModel(settings.model);
+    const savedProvider = settings.activeProvider;
+    if (settings.configuredProviders[savedProvider]) {
+      setActiveProvider(savedProvider);
+      setModel(settings.model);
+      return;
+    }
+    const fallback = LLM_PROVIDER_META.find((p) => settings.configuredProviders[p.id]);
+    if (fallback) {
+      setActiveProvider(fallback.id);
+      setModel(LLM_MODEL_CATALOG[fallback.id][0]?.id ?? settings.model);
+    }
   }, [settings]);
 
   const modelOptions = useMemo(
-    () => LLM_MODEL_CATALOG[activeProvider].map((m) => ({ value: m.id, label: m.label })),
+    () =>
+      LLM_MODEL_CATALOG[activeProvider].map((m) => ({
+        value: m.id,
+        label: m.label,
+        detail: formatLlmModelPrice(m),
+      })),
     [activeProvider],
   );
   const selectedModelMeta = findLlmModel(activeProvider, model);
@@ -106,7 +124,7 @@ export const AiSettings = observer(function AiSettings() {
   };
 
   const newProviderMeta = getLlmProviderMeta(newKeyProvider);
-  const configured = llmStore.configuredProviders;
+  const activeModelDisabled = !settings || configured.length === 0;
 
   return (
     <SettingsSectionShell
@@ -193,7 +211,7 @@ export const AiSettings = observer(function AiSettings() {
               <FieldSelect
                 value={newKeyProvider}
                 onValueChange={(v) => setNewKeyProvider(v as LlmProviderId)}
-                options={providerOptions}
+                options={allProviderOptions}
                 className="w-full"
               />
             </SettingsField>
@@ -272,26 +290,36 @@ export const AiSettings = observer(function AiSettings() {
           <CardDescription>Used by ⌘J and Ask AI. You can also switch it from the AI bar in a note.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <SettingsField label="Provider">
-              <FieldSelect value={activeProvider} onValueChange={handleProviderChange} options={providerOptions} className="w-full" />
-            </SettingsField>
-            <SettingsField label="Model">
-              <FieldSelect value={model} onValueChange={setModel} options={modelOptions} className="w-full" />
-            </SettingsField>
-          </div>
-          {selectedModelMeta ? (
+          {activeModelDisabled ? (
+            <p className="text-xs text-dim">Add at least one provider API key above to choose an active model.</p>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              <SettingsField label="Provider">
+                <FieldSelect
+                  value={activeProvider}
+                  onValueChange={handleProviderChange}
+                  options={configuredProviderOptions}
+                  className="w-full"
+                />
+              </SettingsField>
+              <SettingsField label="Model">
+                <FieldSelect value={model} onValueChange={setModel} options={modelOptions} className="w-full" />
+              </SettingsField>
+            </div>
+          )}
+          {selectedModelMeta && !activeModelDisabled ? (
             <p className="text-xs text-dim">
               {formatUsd(selectedModelMeta.inputPer1MUsd)} / {formatUsd(selectedModelMeta.outputPer1MUsd)} per 1M tokens (in / out)
               {selectedModelMeta.contextTokens ? ` · ${selectedModelMeta.contextTokens.toLocaleString()} context` : ""}
               {selectedModelMeta.notes ? ` · ${selectedModelMeta.notes}` : ""}
             </p>
           ) : null}
-          {settings && !settings.configuredProviders[activeProvider] ? (
-            <p className="text-xs text-danger">Add an API key for {getLlmProviderMeta(activeProvider).name} to use this model.</p>
-          ) : null}
           <div className="flex justify-end">
-            <Button variant="default" onClick={() => void saveModel()} disabled={llmStore.saving || !modelDirty}>
+            <Button
+              variant="default"
+              onClick={() => void saveModel()}
+              disabled={llmStore.saving || !modelDirty || activeModelDisabled}
+            >
               {llmStore.saving ? "Saving…" : "Save model"}
             </Button>
           </div>
