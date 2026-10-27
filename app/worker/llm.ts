@@ -3,9 +3,13 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import {
+  DEFAULT_IMAGE_ASPECT_RATIO,
+  DEFAULT_IMAGE_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_LLM_PROVIDER,
+  IMAGE_ASPECT_RATIOS,
   LLM_PROVIDER_IDS,
+  isImageAspectRatio,
   isLlmProviderId,
   type LlmChatMessage,
   type LlmProviderId,
@@ -21,6 +25,8 @@ type ApiKeys = Partial<Record<LlmProviderId, string>>;
 type SettingsRow = {
   activeProvider: string;
   model: string;
+  imageModel: string | null;
+  imageAspectRatio: string | null;
   apiKeys: string;
   updatedAt: string;
 };
@@ -54,7 +60,25 @@ function maskApiKey(key: string): string {
   return `${key.slice(0, 4)}…${key.slice(-4)}`;
 }
 
-function toView(activeProvider: LlmProviderId, model: string, keys: ApiKeys, updatedAt: string | null): LlmSettingsView {
+function resolveImageModel(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed || DEFAULT_IMAGE_MODEL;
+}
+
+function resolveImageAspectRatio(value: string | null | undefined): (typeof IMAGE_ASPECT_RATIOS)[number] {
+  const trimmed = value?.trim();
+  if (trimmed && isImageAspectRatio(trimmed)) return trimmed;
+  return DEFAULT_IMAGE_ASPECT_RATIO;
+}
+
+function toView(
+  activeProvider: LlmProviderId,
+  model: string,
+  imageModel: string,
+  imageAspectRatio: (typeof IMAGE_ASPECT_RATIOS)[number],
+  keys: ApiKeys,
+  updatedAt: string | null,
+): LlmSettingsView {
   const configuredProviders = {} as Record<LlmProviderId, boolean>;
   const maskedApiKeys: Partial<Record<LlmProviderId, string>> = {};
   for (const id of LLM_PROVIDER_IDS) {
@@ -62,21 +86,31 @@ function toView(activeProvider: LlmProviderId, model: string, keys: ApiKeys, upd
     configuredProviders[id] = Boolean(key);
     if (key) maskedApiKeys[id] = maskApiKey(key);
   }
-  return { activeProvider, model, updatedAt, configuredProviders, maskedApiKeys };
+  return { activeProvider, model, imageModel, imageAspectRatio, updatedAt, configuredProviders, maskedApiKeys };
 }
 
 async function loadSettings(env: Env, userId: string) {
   const row = await env.DB.prepare(
-    "SELECT active_provider as activeProvider, model, api_keys as apiKeys, updated_at as updatedAt FROM llm_settings WHERE user_id = ?",
+    `SELECT active_provider as activeProvider, model, image_model as imageModel, image_aspect_ratio as imageAspectRatio,
+            api_keys as apiKeys, updated_at as updatedAt FROM llm_settings WHERE user_id = ?`,
   )
     .bind(userId)
     .first<SettingsRow>();
   if (!row) {
-    return { activeProvider: DEFAULT_LLM_PROVIDER, model: DEFAULT_LLM_MODEL, keys: {} as ApiKeys, updatedAt: null };
+    return {
+      activeProvider: DEFAULT_LLM_PROVIDER,
+      model: DEFAULT_LLM_MODEL,
+      imageModel: DEFAULT_IMAGE_MODEL,
+      imageAspectRatio: DEFAULT_IMAGE_ASPECT_RATIO,
+      keys: {} as ApiKeys,
+      updatedAt: null,
+    };
   }
   return {
     activeProvider: isLlmProviderId(row.activeProvider) ? row.activeProvider : DEFAULT_LLM_PROVIDER,
     model: row.model || DEFAULT_LLM_MODEL,
+    imageModel: resolveImageModel(row.imageModel),
+    imageAspectRatio: resolveImageAspectRatio(row.imageAspectRatio),
     keys: await openKeys(env, row.apiKeys),
     updatedAt: row.updatedAt,
   };
@@ -280,7 +314,9 @@ export const llmRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 llmRoutes.get("/settings", async (c) => {
   const s = await loadSettings(c.env, c.get("user").id);
-  return c.json({ settings: toView(s.activeProvider, s.model, s.keys, s.updatedAt) });
+  return c.json({
+    settings: toView(s.activeProvider, s.model, s.imageModel, s.imageAspectRatio, s.keys, s.updatedAt),
+  });
 });
 
 llmRoutes.patch(
@@ -290,6 +326,8 @@ llmRoutes.patch(
     z.object({
       activeProvider: providerSchema.optional(),
       model: z.string().min(1).max(120).optional(),
+      imageModel: z.string().min(1).max(120).optional(),
+      imageAspectRatio: z.enum(IMAGE_ASPECT_RATIOS).optional(),
       apiKeys: z.record(providerSchema, z.string().max(400)).optional(),
     }),
   ),
@@ -305,17 +343,99 @@ llmRoutes.patch(
     }
     const activeProvider = patch.activeProvider ?? current.activeProvider;
     const model = patch.model?.trim() || current.model;
+    const imageModel = patch.imageModel?.trim() || current.imageModel;
+    const imageAspectRatio = patch.imageAspectRatio ?? current.imageAspectRatio;
     const updatedAt = new Date().toISOString();
     await c.env.DB.prepare(
-      `INSERT INTO llm_settings (user_id, active_provider, model, api_keys, updated_at) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO llm_settings (user_id, active_provider, model, image_model, image_aspect_ratio, api_keys, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET active_provider = excluded.active_provider, model = excluded.model,
+         image_model = excluded.image_model, image_aspect_ratio = excluded.image_aspect_ratio,
          api_keys = excluded.api_keys, updated_at = excluded.updated_at`,
     )
-      .bind(user.id, activeProvider, model, await sealKeys(c.env, keys), updatedAt)
+      .bind(user.id, activeProvider, model, imageModel, imageAspectRatio, await sealKeys(c.env, keys), updatedAt)
       .run();
-    return c.json({ settings: toView(activeProvider, model, keys, updatedAt) });
+    return c.json({
+      settings: toView(activeProvider, model, imageModel, imageAspectRatio, keys, updatedAt),
+    });
   },
 );
+
+const imageGenerateSchema = z.object({
+  prompt: z.string().min(1).max(4_000),
+  context: z.string().max(200_000).optional(),
+});
+
+type GeminiImagePart = { inlineData?: { mimeType?: string; data?: string }; text?: string };
+
+async function generateGeminiImage(
+  apiKey: string,
+  model: string,
+  aspectRatio: string,
+  prompt: string,
+  context: string | undefined,
+  signal: AbortSignal,
+): Promise<{ mimeType: string; dataBase64: string; caption?: string }> {
+  const parts: string[] = [];
+  if (context?.trim()) parts.push(`Context from the user's note:\n${context.trim()}`);
+  parts.push(`Create an image for this description:\n${prompt.trim()}`);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: parts.join("\n\n") }] }],
+      generationConfig: {
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: { aspectRatio },
+      },
+    }),
+    signal,
+  });
+  if (!res.ok) throw await providerFailure("Gemini", res);
+  const body = (await res.json()) as {
+    candidates?: { content?: { parts?: GeminiImagePart[] } }[];
+  };
+  let caption: string | undefined;
+  let mimeType: string | undefined;
+  let dataBase64: string | undefined;
+  for (const part of body.candidates?.[0]?.content?.parts ?? []) {
+    if (part.text?.trim()) caption = part.text.trim();
+    if (part.inlineData?.data) {
+      mimeType = part.inlineData.mimeType || "image/png";
+      dataBase64 = part.inlineData.data;
+    }
+  }
+  if (!dataBase64 || !mimeType) {
+    throw new ProviderError("Gemini did not return an image. Try rephrasing the prompt or switching models.");
+  }
+  return { mimeType, dataBase64, caption };
+}
+
+llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), async (c) => {
+  const input = c.req.valid("json");
+  const s = await loadSettings(c.env, c.get("user").id);
+  const apiKey = s.keys.gemini?.trim();
+  if (!apiKey) return c.json({ error: "no_gemini_key" }, 400);
+
+  const upstream = new AbortController();
+  c.req.raw.signal?.addEventListener("abort", () => upstream.abort());
+  try {
+    const result = await generateGeminiImage(
+      apiKey,
+      s.imageModel,
+      s.imageAspectRatio,
+      input.prompt,
+      input.context,
+      upstream.signal,
+    );
+    return c.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Image generation failed.";
+    const status = err instanceof ProviderError && message.includes("rate") ? 429 : 502;
+    return c.json({ error: message }, status);
+  }
+});
 
 llmRoutes.post("/generate", zValidator("json", generateSchema), async (c) => {
   const input = c.req.valid("json");

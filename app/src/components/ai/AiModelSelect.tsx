@@ -1,7 +1,7 @@
 import { AlertCircle, Check, ChevronDown, Settings } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { toast } from "sonner";
-import { LLM_MODEL_CATALOG, compactModelLabel, type LlmProviderId } from "@shared/llm";
+import { LLM_MODEL_CATALOG, compactModelLabel, formatLlmModelPrice, type LlmProviderId } from "@shared/llm";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -71,7 +71,7 @@ export const AiModelSelect = observer(function AiModelSelect({
       <DropdownMenuContent
         {...{ [AI_BAR_PORTAL_ATTR]: "" }}
         align="end"
-        className="max-h-[min(420px,70vh)] w-56 overflow-y-auto"
+        className="max-h-[min(420px,70vh)] w-64 overflow-y-auto"
         onCloseAutoFocus={(e) => {
           e.preventDefault();
           onAfterClose?.();
@@ -80,17 +80,23 @@ export const AiModelSelect = observer(function AiModelSelect({
         {llmStore.configuredProviders.map((provider, index) => (
           <div key={provider.id}>
             {index > 0 ? <DropdownMenuSeparator /> : null}
-            <DropdownMenuLabel className="text-[10px] text-dim">{provider.name}</DropdownMenuLabel>
+            <DropdownMenuLabel className="flex items-center justify-between gap-2 pr-2 text-[10px] text-dim">
+              <span>{provider.name}</span>
+              <span className="font-normal tabular-nums">$/1M in/out</span>
+            </DropdownMenuLabel>
             {LLM_MODEL_CATALOG[provider.id].map((m) => {
               const selected = settings.activeProvider === provider.id && settings.model === m.id;
               return (
                 <DropdownMenuItem
                   key={m.id}
-                  className="flex items-center justify-between gap-2 text-xs"
+                  className="flex items-center gap-2 text-xs"
                   onSelect={() => void select(provider.id, m.id)}
                 >
-                  <span className="min-w-0 truncate">{compactModelLabel(provider.id, m.id)}</span>
-                  {selected ? <Check className="size-3.5 shrink-0 text-accent-color" /> : null}
+                  <span className="min-w-0 flex-1 truncate">{compactModelLabel(provider.id, m.id)}</span>
+                  <span className="shrink-0 text-[10px] tabular-nums text-dim">{formatLlmModelPrice(m)}</span>
+                  <span className="flex w-3.5 shrink-0 justify-center">
+                    {selected ? <Check className="size-3.5 text-accent-color" /> : null}
+                  </span>
                 </DropdownMenuItem>
               );
             })}

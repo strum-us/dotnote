@@ -166,6 +166,22 @@ export function findLlmModel(provider: LlmProviderId, modelId: string): LlmModel
   return LLM_MODEL_CATALOG[provider].find((m) => m.id === modelId);
 }
 
+function formatUsdPer1M(value: number): string {
+  const abs = Math.abs(value);
+  const digits = abs >= 1 ? (Number.isInteger(value) ? 0 : 2) : 2;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+/** Compact in/out pricing for model pickers, e.g. `$5 / $30`. */
+export function formatLlmModelPrice(model: Pick<LlmModelOption, "inputPer1MUsd" | "outputPer1MUsd">): string {
+  return `${formatUsdPer1M(model.inputPer1MUsd)} / ${formatUsdPer1M(model.outputPer1MUsd)}`;
+}
+
 /** Short label for chips, e.g. `Claude Opus 5.5` → `Opus 5.5`. */
 export function compactModelLabel(provider: LlmProviderId, modelId: string): string {
   const label = findLlmModel(provider, modelId)?.label;
@@ -174,9 +190,45 @@ export function compactModelLabel(provider: LlmProviderId, modelId: string): str
 }
 
 /** What the client sees; raw keys never leave the Worker. */
+export const IMAGE_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4"] as const;
+export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
+
+export const DEFAULT_IMAGE_MODEL = "gemini-2.5-flash-image";
+export const DEFAULT_IMAGE_ASPECT_RATIO: ImageAspectRatio = "16:9";
+
+export type ImageModelOption = {
+  id: string;
+  label: string;
+  notes?: string;
+};
+
+/** Gemini image models (AI Studio / free tier). */
+export const GEMINI_IMAGE_MODEL_CATALOG: ImageModelOption[] = [
+  {
+    id: "gemini-2.5-flash-image",
+    label: "Gemini 2.5 Flash Image",
+    notes: "Free tier · fast (Nano Banana)",
+  },
+  {
+    id: "gemini-3.1-flash-image",
+    label: "Gemini 3.1 Flash Image",
+    notes: "Higher quality · may require preview access",
+  },
+];
+
+export function findImageModel(modelId: string): ImageModelOption | undefined {
+  return GEMINI_IMAGE_MODEL_CATALOG.find((m) => m.id === modelId);
+}
+
+export function isImageAspectRatio(value: string): value is ImageAspectRatio {
+  return (IMAGE_ASPECT_RATIOS as readonly string[]).includes(value);
+}
+
 export type LlmSettingsView = {
   activeProvider: LlmProviderId;
   model: string;
+  imageModel: string;
+  imageAspectRatio: ImageAspectRatio;
   updatedAt: string | null;
   configuredProviders: Record<LlmProviderId, boolean>;
   maskedApiKeys: Partial<Record<LlmProviderId, string>>;
@@ -185,8 +237,17 @@ export type LlmSettingsView = {
 export type UpdateLlmSettings = {
   activeProvider?: LlmProviderId;
   model?: string;
+  imageModel?: string;
+  imageAspectRatio?: ImageAspectRatio;
   /** An empty string removes that provider's key. */
   apiKeys?: Partial<Record<LlmProviderId, string>>;
+};
+
+export type AiImageGenerateResponse = {
+  mimeType: string;
+  dataBase64: string;
+  /** Optional caption returned by the model alongside the image. */
+  caption?: string;
 };
 
 export type LlmChatMessage = { role: "user" | "assistant"; content: string };

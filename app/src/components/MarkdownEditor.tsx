@@ -180,6 +180,11 @@ const BlockEditor = observer(function BlockEditor({
     openSettingsSection("ai");
   }, []);
 
+  const openAiImageSettings = useCallback(() => {
+    noteStore.checkpoint();
+    openSettingsSection("ai-image");
+  }, []);
+
   // ⌘J / Ctrl+J toggles the AI bar while the note has focus.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -309,8 +314,12 @@ const BlockEditor = observer(function BlockEditor({
             editor={editor}
             target={aiTarget}
             containerRef={columnRef}
+            workspaceId={workspaceId}
+            notePath={notePath}
+            imageSettings={settings}
             onClose={closeAi}
             onOpenSettings={openAiSettings}
+            onOpenImageSettings={openAiImageSettings}
           />
         ) : null}
       </div>

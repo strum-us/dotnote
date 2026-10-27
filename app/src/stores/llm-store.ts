@@ -25,6 +25,11 @@ class LlmStore {
     return Boolean(this.settings?.configuredProviders[this.settings.activeProvider]);
   }
 
+  /** True when a Gemini key is stored for image generation. */
+  get imageReady(): boolean {
+    return Boolean(this.settings?.configuredProviders.gemini);
+  }
+
   ensureLoaded(): Promise<void> {
     if (this.settings) return Promise.resolve();
     return this.refresh();
