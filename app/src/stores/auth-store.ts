@@ -20,7 +20,9 @@ const AUTH_COPY: Record<string, string> = {
 function readCachedUser(): User | null {
   try {
     const raw = localStorage.getItem(USER_KEY);
-    return raw ? (JSON.parse(raw) as User) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as User;
+    return { ...parsed, syncDisabled: parsed.syncDisabled ?? false };
   } catch {
     return null;
   }
@@ -78,7 +80,8 @@ class AuthStore {
         const same =
           user?.id === this.user?.id &&
           user?.fullName === this.user?.fullName &&
-          user?.email === this.user?.email;
+          user?.email === this.user?.email &&
+          user?.syncDisabled === this.user?.syncDisabled;
         if (!same) this.user = user;
         this.booted = true;
       });

@@ -110,7 +110,7 @@ class WorkspaceStore {
   }
 
   /** Paint from IndexedDB first, then revalidate workspaces and the tree in the background. */
-  async boot(userId: string): Promise<void> {
+  async boot(userId: string, syncDisabled = false): Promise<void> {
     if (this.userId !== userId) {
       this.serverWorkspaces = [];
       this.activeId = null;
@@ -119,7 +119,7 @@ class WorkspaceStore {
     this.userId = userId;
     const [cached] = await Promise.all([
       readCache<Workspace[]>(`workspaces:${userId}`, "trees").catch(() => null),
-      syncStore.start(userId),
+      syncStore.start(userId, { syncDisabled }),
     ]);
     runInAction(() => {
       if (cached && this.serverWorkspaces.length === 0) this.serverWorkspaces = cached;

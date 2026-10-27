@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { PublicSharePage } from "./components/PublicSharePage";
 import { parsePublicSharePath } from "@/lib/share-route";
+import { EntrySamplePage } from "@/entry-sample/EntrySamplePage";
+import { parseEntrySamplePath } from "@/entry-sample/entry-sample-route";
 import { themeStore } from "@/stores/theme-store";
 import "./index.css";
 
@@ -22,6 +24,11 @@ function Root() {
   const shareToken = parsePublicSharePath(pathname);
   if (shareToken) {
     return <PublicSharePage token={shareToken} />;
+  }
+
+  const entrySample = parseEntrySamplePath(pathname);
+  if (entrySample) {
+    return <EntrySamplePage hint={entrySample} />;
   }
 
   return <App />;

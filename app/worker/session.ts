@@ -52,14 +52,20 @@ export async function resolveUser(c: Context<{ Bindings: Env; Variables: AppVari
   const token = parseCookie(c.req.header("Cookie"), COOKIE);
   if (!token) return null;
   const row = await c.env.DB.prepare(
-    `SELECT u.id as id, u.full_name as fullName, u.email as email
+    `SELECT u.id as id, u.full_name as fullName, u.email as email, u.sync_disabled as syncDisabled
      FROM sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token = ? AND datetime(s.expires_at) > datetime('now')`,
   )
     .bind(await contentHash(token))
-    .first<User>();
-  return row;
+    .first<{ id: string; fullName: string; email: string; syncDisabled: number }>();
+  if (!row) return null;
+  return {
+    id: row.id,
+    fullName: row.fullName,
+    email: row.email,
+    syncDisabled: row.syncDisabled === 1,
+  };
 }
 
 export async function requireUser(

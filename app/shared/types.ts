@@ -2,6 +2,8 @@ export type User = {
   id: string;
   fullName: string;
   email: string;
+  /** When true, mutations are kept local only; the server rejects writes. */
+  syncDisabled: boolean;
 };
 
 export type AuthSetup = {

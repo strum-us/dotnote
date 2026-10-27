@@ -68,6 +68,7 @@ class SyncStore {
   /** The last request failed for a transient reason and the queue is backing off. */
   retrying = false;
   userId: string | null = null;
+  syncDisabled = false;
 
   private seq = 0;
   private pumping = false;
@@ -195,8 +196,9 @@ class SyncStore {
   }
 
   /** Load the durable queue for `userId` and start sending. Safe to call again on sign-in. */
-  async start(userId: string): Promise<void> {
+  async start(userId: string, options?: { syncDisabled?: boolean }): Promise<void> {
     this.userId = userId;
+    this.syncDisabled = options?.syncDisabled ?? false;
     this.loadPromise ??= this.load();
     await this.loadPromise;
     this.pump();
@@ -396,7 +398,7 @@ class SyncStore {
   }
 
   private pump(): void {
-    if (!this.ready || this.pumping) return;
+    if (!this.ready || this.pumping || this.syncDisabled) return;
     this.pumping = true;
     void this.drain().finally(() => {
       this.pumping = false;

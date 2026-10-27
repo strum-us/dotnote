@@ -80,8 +80,10 @@ export const App = observer(function App() {
   }, []);
 
   useEffect(() => {
-    if (userId) void workspaceStore.boot(userId).then(() => importStore.boot(userId));
-  }, [userId]);
+    if (!userId) return;
+    const syncDisabled = authStore.user?.syncDisabled ?? false;
+    void workspaceStore.boot(userId, syncDisabled).then(() => importStore.boot(userId));
+  }, [userId, authStore.user?.syncDisabled]);
 
   useEffect(() => {
     if (!userId) return;

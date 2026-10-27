@@ -15,12 +15,23 @@ type UserRow = {
   fullName: string;
   email: string;
   passwordHash: string;
+  syncDisabled: number;
 };
 
-const USER_SELECT = `SELECT id, full_name as fullName, email, password_hash as passwordHash FROM users`;
+const USER_SELECT = `SELECT id, full_name as fullName, email, password_hash as passwordHash, sync_disabled as syncDisabled FROM users`;
 
-function toUser(row: UserRow): User {
-  return { id: row.id, fullName: row.fullName, email: row.email };
+function toUser(row: Pick<UserRow, "id" | "fullName" | "email" | "syncDisabled">): User {
+  return {
+    id: row.id,
+    fullName: row.fullName,
+    email: row.email,
+    syncDisabled: row.syncDisabled === 1,
+  };
+}
+
+export async function getUserById(env: Env, userId: string): Promise<User | null> {
+  const row = await env.DB.prepare(`${USER_SELECT} WHERE id = ?`).bind(userId).first<UserRow>();
+  return row ? toUser(row) : null;
 }
 
 export async function ownerExists(env: Env): Promise<boolean> {
@@ -52,7 +63,7 @@ export async function createOwner(
     .bind(id)
     .run();
   await env.DB.prepare("DELETE FROM sessions WHERE user_id NOT IN (SELECT id FROM users)").run();
-  return { ok: true, user: { id, fullName: input.fullName, email: input.email } };
+  return { ok: true, user: { id, fullName: input.fullName, email: input.email, syncDisabled: false } };
 }
 
 export async function authenticate(
@@ -65,7 +76,7 @@ export async function authenticate(
     .first<UserRow>();
   const stored = row?.passwordHash ?? DUMMY_PASSWORD_HASH;
   const matches = await verifyPassword(password, stored);
-  if (!row || !matches) return null;
+  if (!row || !matches || row.syncDisabled === 1) return null;
   return toUser(row);
 }
 

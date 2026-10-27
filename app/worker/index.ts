@@ -56,6 +56,7 @@ import {
 } from "./session";
 import { cloudflareRoutes } from "./cloudflare";
 import { installRoutes } from "./install-routes";
+import { entrySampleRoutes } from "./entry-sample";
 import { llmRoutes } from "./llm";
 import { updateRoutes } from "./update/update-routes";
 import {
@@ -201,9 +202,18 @@ app.get("/api/public/shares/:token/assets", async (c) => {
 });
 
 app.route("/api/install", installRoutes);
+app.route("/api/entry-sample", entrySampleRoutes);
 
 const authed = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 authed.use("*", requireUser);
+authed.use("*", async (c, next) => {
+  const user = c.get("user");
+  const method = c.req.method;
+  if (user.syncDisabled && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    return c.json({ error: "sync_disabled" }, 403);
+  }
+  await next();
+});
 
 async function createWorkspaceRecord(
   env: Env,
