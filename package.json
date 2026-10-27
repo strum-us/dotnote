@@ -1,0 +1,17 @@
+{
+  "name": "dotnote",
+  "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "pnpm --filter dotnote-app dev",
+    "build": "pnpm --filter dotnote-app build",
+    "deploy:app": "pnpm --filter dotnote-app run deploy",
+    "pack:release": "node scripts/pack-release.mjs",
+    "deploy:installer": "node scripts/pack-release.mjs && pnpm --filter dotnote-installer run deploy",
+    "dev:installer": "pnpm --filter dotnote-installer dev"
+  }
+}

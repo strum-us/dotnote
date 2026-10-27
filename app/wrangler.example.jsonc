@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dotnote",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-05-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dotnote-index",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "alias": {
+    "@shared": "./shared"
+  },
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "dotnote-data"
+    }
+  ],
+  "vars": {
+    "HQ_URL": "https://hq.example.com",
+    "WORKER_NAME": "dotnote",
+    "R2_BUCKET_NAME": "dotnote-data",
+    "D1_DATABASE_NAME": "dotnote-index",
+    "INSTALLER_ORIGIN": "https://install.example.com"
+  }
+}

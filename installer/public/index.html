@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      (function(){var k="dotnote-theme";var d=document.documentElement;function sys(){return window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}function apply(mode){var r=mode==="system"?sys():mode;d.classList.toggle("dark",r==="dark");d.style.colorScheme=r;}try{var s=localStorage.getItem(k);var m=s==="light"||s==="dark"||s==="system"?s:"system";apply(m);}catch(e){apply("system");}})();
+    </script>
+    <title>Install Dotnote</title>
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/deploy.css" />
+  </head>
+  <body class="install-page">
+    <div class="page-glow" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="/">
+        <img src="/logo.svg" alt="" width="30" height="30" />
+        <span>Dotnote</span>
+      </a>
+      <nav aria-label="Primary">
+        <span class="nav-current">Install</span>
+      </nav>
+    </header>
+    <main class="page-main">
+      <div class="hero">
+        <h1>Install on your Cloudflare account</h1>
+        <p class="hero-lead">
+          Deploy Dotnote into your own Cloudflare account. Notes stay in your R2 bucket; auth stays separate.
+        </p>
+      </div>
+      <div class="install-wizard" id="wizard">
+        <section class="panel" id="card" aria-live="polite"></section>
+      </div>
+      <p class="fine" id="fine"></p>
+    </main>
+    <footer class="site-footer">
+      <div class="footer-row">
+        <div class="footer-brand">
+          <img src="/logo.svg" alt="" width="20" height="20" />
+          <span id="footer-year"></span>
+        </div>
+        <p class="footer-note">
+          Notes deploy to your Cloudflare R2. This page only orchestrates the install — it does not store your notes.
+        </p>
+      </div>
+    </footer>
+    <script>
+      document.getElementById("footer-year").textContent =
+        "© " + new Date().getFullYear() + " Dotnote";
+    </script>
+    <script src="/deploy.js" type="module"></script>
+  </body>
+</html>

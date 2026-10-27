@@ -1,0 +1,297 @@
+.install-wizard,
+.install-main {
+  --panel: #ffffff;
+  --well: #f7f6f3;
+  --border: #e6e2da;
+  --ink: #1a1814;
+  --ink-secondary: #6b6560;
+  --dim: #8a837c;
+  --primary: #f2a93b;
+  --primary-fg: #1a1408;
+  --primary-hover: #f7bd62;
+  --error: #dc2626;
+  --ok: #15803d;
+  --radius: 10px;
+  --font-mono: "IBM Plex Mono Dotnote", var(--font-mono, ui-monospace, monospace);
+}
+
+html.dark .install-wizard,
+html.dark .install-main {
+  --panel: #191919;
+  --well: #121212;
+  --border: #262626;
+  --ink: #f0f0f0;
+  --ink-secondary: #b8b8b8;
+  --dim: #7c7c7c;
+  --error: #f87171;
+  --ok: #4ade80;
+}
+
+.install-wizard {
+  max-width: 32rem;
+  margin: 0 auto;
+}
+
+.install-wizard .panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.35rem 1.35rem 1.15rem;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 25%);
+}
+
+.install-wizard .panel-badge {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.install-wizard .panel-title {
+  margin: 0 0 0.85rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.install-wizard .panel-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.install-wizard .lead,
+.install-wizard .hint,
+.install-wizard .error,
+.install-wizard .ok,
+.install-wizard .status-line {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.install-wizard .lead,
+.install-wizard .hint {
+  color: var(--ink-secondary);
+}
+
+.install-wizard .error {
+  color: var(--error);
+}
+
+.install-wizard .ok {
+  color: var(--ok);
+}
+
+.install-wizard .status-line {
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: var(--well);
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+  font-size: 0.85rem;
+}
+
+.install-wizard .status-line.is-warn {
+  border-color: rgb(248 113 113 / 35%);
+  color: var(--error);
+}
+
+.install-wizard label {
+  display: block;
+  margin-top: 1rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.install-wizard input[type="text"],
+.install-wizard input[type="password"] {
+  width: 100%;
+  margin-top: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  font: inherit;
+  font-size: 0.9rem;
+  background: var(--well);
+  color: var(--ink);
+}
+
+.install-wizard input[type="text"]:focus,
+.install-wizard input[type="password"]:focus {
+  outline: 2px solid rgb(242 169 59 / 35%);
+  border-color: var(--primary);
+}
+
+.install-wizard input[type="text"]::placeholder,
+.install-wizard input[type="password"]::placeholder {
+  color: var(--dim);
+}
+
+.install-wizard button,
+.install-wizard .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1.1rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-fg);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.6rem 1rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.install-wizard button:hover:not(:disabled),
+.install-wizard .button:hover {
+  background: var(--primary-hover);
+}
+
+.install-wizard button.ghost,
+.install-wizard .button.ghost {
+  background: transparent;
+  color: var(--ink-secondary);
+  border: 1px solid var(--border);
+}
+
+.install-wizard button.ghost:hover:not(:disabled) {
+  background: var(--well);
+  color: var(--ink);
+}
+
+.install-wizard button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.install-wizard .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.install-wizard .row button {
+  margin-top: 1.1rem;
+}
+
+.install-wizard .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.install-wizard .choice {
+  text-align: left;
+  background: var(--well);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  margin-top: 0;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.install-wizard .choice:hover:not(:disabled) {
+  border-color: rgb(242 169 59 / 45%);
+}
+
+.install-wizard .choice.picked {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px rgb(242 169 59 / 25%);
+}
+
+.install-wizard .list {
+  margin: 0.65rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--ink-secondary);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.install-wizard .deploy-log {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 8px;
+  background: var(--well);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.65;
+}
+
+.install-wizard .log-line {
+  margin: 0;
+  color: var(--dim);
+}
+
+.install-wizard .log-line.is-done {
+  color: var(--ink-secondary);
+}
+
+.install-wizard .log-line.is-done::before {
+  content: "✓ ";
+  color: var(--ok);
+}
+
+.install-wizard .log-line.is-active {
+  color: var(--primary);
+}
+
+.install-wizard .log-line.is-active::before {
+  content: "› ";
+}
+
+.install-wizard .install-url {
+  margin: 0.35rem 0 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  background: var(--well);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.install-wizard .install-url a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.install-wizard .install-url a:hover {
+  text-decoration: underline;
+}
+
+.install-wizard .zones {
+  max-height: 11rem;
+  overflow: auto;
+  margin-top: 0.5rem;
+  padding-right: 0.25rem;
+}
+
+.install-main .fine,
+.install-page .fine {
+  max-width: 32rem;
+  margin: 1.25rem auto 0;
+  padding: 0 0.25rem;
+  color: var(--dim, #7c7c7c);
+  font-size: 0.75rem;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.install-main {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 0 1rem 1rem;
+}

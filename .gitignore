@@ -1,0 +1,12 @@
+node_modules
+dist
+.next
+.next-standalone
+.open-next
+.wrangler
+.dev.vars
+*.log
+.DS_Store
+installer/public/release
+app/wrangler.jsonc
+installer/wrangler.jsonc

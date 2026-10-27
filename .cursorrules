@@ -1,0 +1,484 @@
+# 8 Rules to Build Native-Speed React (Next.js) Web Apps Like Linear
+
+Apps like Linear feel instant. You click and the page is already there. You hold a key and the list keeps up. You scroll through thousands of items and nothing stutters.
+
+Most React apps don't feel like that. They show spinners on every page change. They lag when you drag. They slow down when the list gets long.
+
+I've built fast-rendering web apps many times over the years. Most recently I built a database client. You connect it to Postgres, MySQL or SQLite, and browse, edit and query your tables in a spreadsheet-style grid. A data grid is a stress test for a frontend. Thousands of cells on screen. Someone holds down an arrow key. Someone drags a selection across 500 rows.
+
+The gap between slow and fast is usually not the framework. It is a handful of habits. These 8 rules are the ones that made the biggest difference across those apps. They also made *building* faster. I keep them in the instructions file my AI coding agent reads before every task (`CLAUDE.md`, `AGENTS.md`, Cursor rules). So every new feature follows them without me checking in review.
+
+The examples below come from different kinds of apps. Each rule uses the example that shows it best.
+
+***
+
+## Rule 1: Put app state in MobX stores, not `useState`
+
+This rule has the biggest payoff, so it comes first.
+
+`useState` is fine for state that dies with the component. Whether a dropdown is open. A hover flag. The text in an input before you submit it. It doesn't work well for **app state**. That means the loaded data, the current selection, the edits in progress and the error from the last request.
+
+When app state lives in `useState`, these problems show up:
+
+* The state lives in whichever component happened to create it. When a sibling needs it, you lift it up. Then you lift it again.
+* You move it into React Context. Now every consumer re-renders when any field changes.
+* Data fetching ends up spread across `useEffect` calls in a dozen components. Each has its own loading flag and its own race conditions.
+* Two components mount at the same time and fire the same request twice.
+
+[MobX](https://mobx.js.org/) solves all of these with very little setup. State lives in a plain class. Components wrapped in `observer` re-render only when a field they **actually read** changes. Nothing else re-renders. (Linear's team has talked publicly about using MobX in their client.)
+
+Example: a project management app with a sidebar that lists your projects. The sidebar, the command palette and the "move to project" menu all need the same list.
+
+```ts
+import { makeAutoObservable, runInAction } from 'mobx';
+
+class ProjectStore {
+  projects: Project[] = [];
+  loadError: string | null = null;
+  private inFlight: Promise<void> | null = null;
+
+  constructor() {
+    makeAutoObservable(this, {}, { autoBind: true });
+  }
+
+  refresh(): Promise<void> {
+    // Sidebar and command palette asked at once? They share one request.
+    if (this.inFlight) return this.inFlight;
+
+    this.inFlight = (async () => {
+      try {
+        const res = await fetch('/api/projects');
+        const projects = await res.json();
+        runInAction(() => {
+          this.projects = projects;
+          this.loadError = null;
+        });
+      } catch (err) {
+        runInAction(() => {
+          this.loadError = err instanceof Error ? err.message : 'Failed to load';
+        });
+      } finally {
+        runInAction(() => {
+          this.inFlight = null;
+        });
+      }
+    })();
+    return this.inFlight;
+  }
+}
+
+export const projectStore = new ProjectStore();
+```
+
+```tsx
+import { observer } from 'mobx-react-lite';
+
+const ProjectSidebar = observer(function ProjectSidebar() {
+  useEffect(() => {
+    projectStore.refresh();
+  }, []);
+
+  if (projectStore.loadError) return <ErrorBanner message={projectStore.loadError} />;
+  return (
+    <ul>
+      {projectStore.projects.map(p => <li key={p.id}>{p.name}</li>)}
+    </ul>
+  );
+});
+```
+
+The component has no loading logic, no fetch and no state of its own. It reads. It re-renders when what it read changes.
+
+These are the rules my coding agent follows, word for word:
+
+* Components **never** call `fetch()` and never assign to store fields. They call store actions.
+* Every assignment after an `await` goes inside `runInAction(...)`.
+* Every component that reads a store is wrapped in `observer(...)`.
+* Loaders keep one in-flight promise and return it to concurrent callers.
+
+**Bonus:** `computedStruct`** for derived values.** Think of a calendar where you drag to pick a time range. The range is computed from two points. The anchor is where you pressed. The focus is where the pointer is now. Every pointer move creates a new focus object. But if the pointer is still inside the same 15-minute slot, the range is the same. `computedStruct` compares the result by value, so nothing downstream re-renders:
+
+```ts
+import { computedStruct, makeAutoObservable } from 'mobx';
+
+type Slot = { day: number; slot: number }; // slot = one 15-minute block
+
+class TimeSelectionStore {
+  anchor: Slot | null = null;
+  focus: Slot | null = null;
+
+  constructor() {
+    makeAutoObservable(this, { range: computedStruct }, { autoBind: true });
+  }
+
+  get range() {
+    if (!this.anchor || !this.focus) return null;
+    return {
+      startDay: Math.min(this.anchor.day, this.focus.day),
+      endDay: Math.max(this.anchor.day, this.focus.day),
+      startSlot: Math.min(this.anchor.slot, this.focus.slot),
+      endSlot: Math.max(this.anchor.slot, this.focus.slot),
+    };
+  }
+}
+```
+
+**Why this also makes you build faster:** every piece of state has exactly one home. You (or your AI agent) never have to work out where state lives or which component owns the fetch. You can test a store without rendering React. New features go into an existing store instead of growing another `useEffect`.
+
+***
+
+## Rule 2: Treat the browser's database as your first server
+
+Spinners on navigation are a choice. If the user saw this data five minutes ago, show it **now** and refresh it in the background. This pattern is called *stale-while-revalidate*.
+
+Example: an issue tracker. You open "My Issues", go to a project, then come back. The second time, the list should appear at once. It should not show a skeleton again.
+
+I use IndexedDB (the browser's built-in database) for this, with one helper that every store calls:
+
+```ts
+export async function loadWithCache<T>(opts: {
+  key: string;
+  maxAgeMs: number;
+  fetcher: () => Promise<T>;
+  onData: (data: T) => void;
+}): Promise<T> {
+  const cached = await readCache<T>(opts.key); // IndexedDB
+
+  if (cached) {
+    opts.onData(cached.data); // paint immediately: 0 ms
+
+    if (Date.now() - cached.fetchedAt > opts.maxAgeMs) {
+      // Stale: refresh quietly, keep the old data on failure
+      opts.fetcher()
+        .then(async fresh => {
+          await writeCache(opts.key, fresh);
+          opts.onData(fresh);
+        })
+        .catch(() => {});
+    }
+    return cached.data;
+  }
+
+  // Cold start: the only time a skeleton is shown
+  const fresh = await opts.fetcher();
+  await writeCache(opts.key, fresh);
+  opts.onData(fresh);
+  return fresh;
+}
+```
+
+The rule for the UI: **a skeleton appears only when there is no cached data at all.** A background refresh never clears what's on screen and never makes it flicker.
+
+The same storage protects the other direction too. That is **user work**. Say a user is writing a long comment on an issue. Save the draft to a separate IndexedDB database 400 ms after the last keystroke. Reload the page, crash the browser or close the laptop. The half-written comment is still there.
+
+Keep the two apart. The cache is **disposable** (safe to wipe at any time). Drafts are **durable** (never wiped automatically). Don't put them in the same store.
+
+(This rule has a real cost. See "The price you pay" at the end.)
+
+***
+
+## Rule 3: When you load a huge number of items, use react-window
+
+Example: a log viewer. A user opens a log file with 100,000 lines. All of them are loaded in memory. If you render 100,000 `<div>`s, the first render takes seconds and every update after that is slow.
+
+The fix is to mount only the rows on screen, plus a few extra above and below. [react-window](https://github.com/bvaughn/react-window) does this for you. You give it the row count, the row height and a component for one row:
+
+```tsx
+import { List, type RowComponentProps } from 'react-window';
+
+function LogRow({ index, style, lines }: RowComponentProps<{ lines: LogLine[] }>) {
+  const line = lines[index];
+  return (
+    <div style={style} className="log-row">
+      <span className="time">{line.time}</span> {line.message}
+    </div>
+  );
+}
+
+const LogView = observer(function LogView() {
+  return (
+    <List
+      rowComponent={LogRow}
+      rowCount={logStore.lines.length}
+      rowHeight={24}
+      rowProps={{ lines: logStore.lines }}
+      overscanCount={10}
+    />
+  );
+});
+```
+
+With 100,000 lines, the DOM holds about 50 rows at any time. Scrolling only swaps which 50.
+
+Four things make the difference between "virtualized" and "actually fast":
+
+* **Use a fixed row height when you can.** react-window supports dynamic heights, but its own docs say they are less efficient. With a fixed height, finding row N is just `N × height`.
+* **Keep the huge array out of deep observability.** By default MobX wraps every item in a large array to track changes. For 100,000 log lines, that is a lot of work you don't need. Mark the field as a reference and replace the array instead of pushing into it:
+
+```ts
+class LogStore {
+  lines: LogLine[] = [];
+
+  constructor() {
+    makeAutoObservable(this, { lines: observable.ref }, { autoBind: true });
+  }
+
+  append(batch: LogLine[]) {
+    this.lines = this.lines.concat(batch); // new array, one change event
+  }
+}
+```
+
+* **Keep** `rowProps`** small and stable.** When a value in `rowProps` changes, every visible row re-renders. Put the data array there. Don't put things that change on every keystroke.
+* **Use** `Grid`** for rows and columns.** If the data is wide too, like a spreadsheet with 200 columns, react-window's `Grid` virtualizes both directions.
+
+Once the DOM is small, the slow part moves to the data. Filtering or sorting 100,000 items on every render will now be your bottleneck. Do that in the store, or defer it (Rule 8).
+
+***
+
+## Rule 4: Never read layout in the hot path
+
+Calls like `getBoundingClientRect()`, `offsetTop` and `scrollHeight` look cheap. They are not. If anything on the page changed since the last frame, the browser must recalculate layout before it can answer.
+
+Example: a kanban board where you drag a card to reorder it. The obvious code checks every card's position on every mouse move to find where the card would drop:
+
+```ts
+// Slow: reads layout for every card, on every mousemove
+function dropIndexAt(pointerY: number) {
+  return cards.findIndex(card => card.getBoundingClientRect().top > pointerY);
+}
+```
+
+It gets worse if you also move the cards (to open a gap) in the same loop. Write, read, write, read. The browser recalculates layout every time. This is called *layout thrashing*.
+
+The fix is to measure once, when the drag starts. After that, use arithmetic:
+
+```ts
+let columnTop = 0;
+let cardMiddles: number[] = [];
+
+function onDragStart(column: HTMLElement) {
+  // Read layout once, before anything moves
+  columnTop = column.getBoundingClientRect().top;
+  cardMiddles = Array.from(column.querySelectorAll<HTMLElement>('[data-card]'), el => {
+    const r = el.getBoundingClientRect();
+    return r.top - columnTop + r.height / 2;
+  });
+}
+
+function dropIndexAt(pointerY: number): number {
+  const y = pointerY - columnTop;
+  let i = 0;
+  while (i < cardMiddles.length && cardMiddles[i] < y) i++;
+  return i;
+}
+```
+
+If the column scrolls during the drag, add the scroll offset. It is still arithmetic. No DOM reads.
+
+The same idea applies to keyboard navigation. When the user presses `j` to move down a long list, don't find the DOM node and read its position. You already know the row index and the row height. Scroll to `index × rowHeight`, or use react-window's imperative API to scroll to a row by index. It works even if that row isn't mounted yet.
+
+***
+
+## Rule 5: Keep the hot path dumb
+
+Every app has a **hot path**. These are the components that re-render on every keystroke or mouse move. In a list app, that's the rows. Three rules apply only there, and they matter a lot.
+
+**a) Pass primitives, not objects.** Example: an issue list where `j` and `k` move the focus, and `x` selects. The parent works out the few values each row needs, and the row is memoized:
+
+```tsx
+<IssueRow
+  key={issue.id}
+  issue={issue}
+  focused={index === focusIndex}
+  selected={selectedIds.has(issue.id)}
+/>
+```
+
+When you press `j` and the focus moves down, only two rows re-render. The one that lost focus and the one that got it. The other 40 visible rows get the same props and skip the render.
+
+**b) One shared popover, not one per row.** Say each row shows an assignee avatar, and hovering it shows a profile card. It's tempting to wrap each avatar in a `<Popover>` or `<Tooltip>` from your UI library. With 500 rows, that's 500 popover instances, each with its own state, refs and effects. Instead, each avatar is a plain button, and one provider at the top owns the only popover:
+
+```tsx
+function ProfileCardProvider({ children }: { children: React.ReactNode }) {
+  const [target, setTarget] = useState<{ rect: DOMRect; userId: string } | null>(null);
+
+  const open = useCallback((anchor: HTMLElement, userId: string) => {
+    setTarget({ rect: anchor.getBoundingClientRect(), userId });
+  }, []);
+
+  return (
+    <ProfileCardContext.Provider value={open}>
+      {children}
+      {target && (
+        <ProfileCard rect={target.rect} userId={target.userId} onClose={() => setTarget(null)} />
+      )}
+    </ProfileCardContext.Provider>
+  );
+}
+```
+
+(This is the good kind of `useState` from Rule 1. It's local UI state of one component. And reading the rect here is fine, because it happens once on hover, not on every frame.)
+
+**c) No heavy work during render.** Say each row shows a one-line preview of the issue description, and the description is Markdown. Don't parse Markdown in every row on every render. Make a plain-text preview once, when the data loads into the store. Do the full Markdown render only when the user opens the issue.
+
+***
+
+## Rule 6: Paint state onto the element instead of adding layers
+
+This one is easy to miss, because it doesn't show up in Chrome.
+
+If you ship to Safari, iOS, or a desktop app that uses the system webview (for example Tauri on macOS), your users run WebKit, not Chrome. Example: a table view with many cells, like a spreadsheet or a Notion-style database view. In one of my apps, a table that was smooth in Chrome **dropped to about 2 frames per second in WebKit** with 1,000 rows loaded.
+
+The cause: WebKit gives its own render layer to every box that is **positioned** (`position: relative/absolute`), **clips overflow** (`overflow: hidden`) or is **translucent** (`opacity < 1`). It walks **all** of those layers on every repaint. A typical cell, `relative overflow-hidden` with an absolutely positioned selection overlay inside, creates several layers. Multiply that by thousands of cells.
+
+The fix is to keep cells flat. **Paint** every state onto the cell itself, using CSS backgrounds and shadows:
+
+```ts
+// Each "layer" is [background-image, background-size, background-position]
+const fill = (color: string) =>
+  [`linear-gradient(${color}, ${color})`, '100% 100%', '0 0'] as const;
+
+const SELECTED = fill('var(--selection-fill)');
+const CHANGED_FLAG = [
+  'linear-gradient(to bottom left, rgb(245 158 11) 50%, transparent 50%)',
+  '7px 7px',
+  '100% 0', // top-right corner triangle
+] as const;
+const ACTIVE_RING = 'inset 0 0 0 2px var(--accent-color)';
+
+function cellStyle(layers: (readonly [string, string, string])[], active: boolean) {
+  return {
+    backgroundImage: layers.map(l => l[0]).join(', '),
+    backgroundSize: layers.map(l => l[1]).join(', '),
+    backgroundPosition: layers.map(l => l[2]).join(', '),
+    backgroundRepeat: 'no-repeat',
+    boxShadow: active ? ACTIVE_RING : undefined,
+  };
+}
+```
+
+Selection tint, the active-cell outline and the "edited" corner flag are all background layers on a plain `<td>`. No overlay elements and no positioning.
+
+Two more details:
+
+* Clip text in an inner `<span>` with `truncate`, not on the `<td>`.
+* For buttons that appear on hover, toggle `visibility`, not `opacity`. `visibility` creates no layer.
+
+**The general lesson:** measure performance in the engine your users actually run. Chrome DevTools won't show you this.
+
+***
+
+## Rule 7: Do at most one unit of work per frame
+
+Mice and keyboards send events faster than the screen redraws. If every `mousemove` runs your full update, the browser falls behind and the UI lags behind the pointer.
+
+**Mouse drags.** Example: a photo gallery where you drag a box to select many photos. The event handler only records where the pointer is. The real work (finding the photos inside the box, updating the selection, auto-scrolling near the edges) runs once per frame:
+
+```ts
+let start = { x: 0, y: 0 };
+let pointer = { x: 0, y: 0 };
+let frame: number | null = null;
+
+const step = () => {
+  frame = null;
+  galleryStore.selectInRect(start, pointer);
+  autoScrollIfNearEdge(pointer);
+};
+
+const onMouseMove = (e: MouseEvent) => {
+  pointer = { x: e.clientX, y: e.clientY }; // cheap
+  if (frame === null) frame = requestAnimationFrame(step); // at most one per frame
+};
+```
+
+**Held keys.** Example: you hold ↓ to move down a long list. The OS sends repeat events. If a frame is slow, they queue up, and WebKit delivers every queued one in order. You release the key and the focus **keeps moving** while it replays the backlog. Fix: drop repeats that are already old.
+
+```ts
+const STALE_KEY_REPEAT_MS = 100;
+
+function isStaleRepeat(event: KeyboardEvent): boolean {
+  if (!event.repeat) return false;
+  const age = performance.now() - event.timeStamp;
+  return age > STALE_KEY_REPEAT_MS && age < 10_000; // ignore odd clocks
+}
+```
+
+Now the focus stops the moment the key comes up.
+
+***
+
+## Rule 8: Let expensive derived values lag behind
+
+Example: a notes app with 5,000 notes and a search box. Every keystroke filters all 5,000 notes and ranks the matches. If that runs before the input updates, typing feels sticky.
+
+The text in the input must update instantly. The results can arrive a moment later. React's `useDeferredValue` says exactly that:
+
+```tsx
+const SearchResults = observer(function SearchResults({ notes }: { notes: Note[] }) {
+  const query = searchStore.query;
+  const deferredQuery = useDeferredValue(query);
+
+  const results = useMemo(
+    () => filterAndRank(notes, deferredQuery),
+    [notes, deferredQuery]
+  );
+
+  const isStale = query !== deferredQuery;
+  return <ResultList results={results} dimmed={isStale} />;
+});
+```
+
+React renders the keystroke first, with the old results still visible (slightly dimmed). It computes the new results when the main thread is free. Typing stays smooth and the results catch up when you pause.
+
+Use this for anything that is *derived* and *expensive*. Search results, chart previews, totals over a large selection.
+
+***
+
+## A note on Next.js
+
+All 8 rules are about the client. In the App Router, put stores and the components that read them in `'use client'` files. IndexedDB, `requestAnimationFrame` and keyboard events only exist in the browser.
+
+One warning about module-level stores like `export const projectStore = new ProjectStore()`. On the server, a module is shared across all requests. So never fill a global store with one user's data during server rendering. Either load data into stores only on the client, or create stores per request and pass them down through a provider.
+
+***
+
+## The price you pay
+
+These rules are not free. Before you copy them, know what they cost.
+
+**1. The client and the server can disagree.** Rule 2 shows cached data first. That data can be old. Another user may have closed the issue. An item may have been deleted on the server but still shows in the list. So:
+
+* The server is always the source of truth. Local data is only a fast first paint.
+* Refetch from the server regularly. On a timer, when the tab gets focus again, when the network comes back, and after every write.
+* Never make an important decision from cached data alone. Permissions, prices at checkout and stock counts must be checked on the server.
+* If many people edit the same data, polling may not be enough. You may need push updates (WebSocket or server-sent events) and a plan for conflicts.
+
+**2. The cache needs care.** Clear it on logout, especially on shared computers. Version the cache key when the data shape changes, or old data will break new code. The browser can also delete IndexedDB data when the disk is low, so the app must work without it.
+
+**3. New kinds of bugs.** A background refresh can overwrite a field the user is editing right now. Shared in-flight requests can return data for an old filter. These bugs are rare and hard to reproduce.
+
+**4. Virtualization has side effects.** The browser's Ctrl+F can't find rows that are not mounted. Screen readers see only part of the list. Printing the full list doesn't work by default. Fixed row heights limit your design (no rows that grow to fit long text).
+
+**5. More code and more rules.** MobX is another library and another way of thinking. New people on the team must learn it. Painting state with background layers (Rule 6) is harder to read than a simple overlay `<div>`.
+
+**When is it worth it?** When speed is part of the product. Tools people use for hours every day. Issue trackers, email clients, editors, data tools, design tools.
+
+**When is it not?** Marketing sites, blogs, simple admin pages, and dashboards people open once a day. For those, normal React plus Next.js server rendering is enough. You don't need to follow these rules. Measure first. Fix the slow part you can actually see.
+
+***
+
+## The cheat sheet
+
+| #          | Rule                            | One line                                                                           |
+| ---------- | ------------------------------- | ---------------------------------------------------------------------------------- |
+| 1          | MobX stores, not `useState`     | App state lives in observable classes. Components only read and call actions       |
+| 2          | Browser DB first                | Show cached data instantly, refresh in the background, autosave drafts             |
+| 3          | react-window for huge lists     | Mount only visible rows, fixed heights, keep huge arrays out of deep observability |
+| 4          | No layout reads in the hot path | Measure once, then use arithmetic. Avoid layout thrashing                          |
+| 5          | Dumb hot path                   | Primitive props, one shared popover, no parsing in render                          |
+| 6          | Paint, don't layer              | Backgrounds and inset shadows instead of positioned overlays                       |
+| 7          | One update per frame            | `requestAnimationFrame` for drags, drop stale key repeats                          |
+| 8          | Defer the expensive             | `useDeferredValue` for heavy derived values                                        |
+
+None of these need a new framework. They're constraints. Once they're written down where your AI agent reads them, every new screen you build starts fast instead of being made fast later. Just remember the price, and use them only where speed really matters.

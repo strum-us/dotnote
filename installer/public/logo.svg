@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Dotnote">
+  <rect width="256" height="256" rx="56" fill="#191919"/>
+  <rect x="17" y="96" width="148" height="64" rx="32" fill="#f7f8fa"/>
+  <circle cx="207" cy="128" r="32" fill="#f2a93b"/>
+</svg>
