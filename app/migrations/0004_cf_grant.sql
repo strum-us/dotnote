@@ -1,3 +1,4 @@
+-- @since 0.1.0
 CREATE TABLE IF NOT EXISTS cf_grant (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   account_id TEXT NOT NULL,

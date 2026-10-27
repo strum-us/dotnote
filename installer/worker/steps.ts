@@ -21,7 +21,14 @@ import {
 import { bytesToBase64, randomGrantKey } from "./crypto";
 import type { Env } from "./env";
 import type { Installation } from "./install-store";
-import { loadAssetBytes, loadRelease, loadWorkerSource, type ReleaseManifest } from "./release";
+import {
+  flatMigrations,
+  loadAssetBytes,
+  loadRelease,
+  loadWorkerSource,
+  migrationFiles,
+  type ReleaseManifest,
+} from "./release";
 
 export const STEPS = [
   { id: "check", label: "Check the account" },
@@ -104,20 +111,44 @@ async function ensureD1(token: string, row: Installation): Promise<void> {
   }
 }
 
+/**
+ * Mark every migration file as applied, so the Dotnote's own updater only runs
+ * files added by later releases. Same table as app/worker/update/schema.ts.
+ */
+async function recordMigrations(token: string, row: Installation, release: ReleaseManifest): Promise<void> {
+  const files = migrationFiles(release);
+  if (!row.state.d1Id || files.length === 0) return;
+  await d1Query(
+    token,
+    row.accountId,
+    row.state.d1Id,
+    "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+  );
+  const now = new Date().toISOString();
+  const values = files.map((file) => `('${file.name.replace(/'/g, "''")}', '${now}')`).join(", ");
+  await d1Query(
+    token,
+    row.accountId,
+    row.state.d1Id,
+    `INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES ${values}`,
+  );
+}
+
 async function migrate(token: string, env: Env, row: Installation): Promise<boolean> {
   const release = await loadRelease(env);
+  const statements = flatMigrations(release);
   if (!row.state.d1Id) throw new Error("The database was not created.");
   const start = row.state.migrationIndex ?? 0;
-  const end = Math.min(release.migrations.length, start + 20);
+  const end = Math.min(statements.length, start + 20);
   for (let i = start; i < end; i++) {
-    await d1Query(token, row.accountId, row.state.d1Id, release.migrations[i]);
+    await d1Query(token, row.accountId, row.state.d1Id, statements[i]);
     row.state.migrationIndex = i + 1;
   }
   row.message =
-    release.migrations.length === 0
-      ? null
-      : `Migrations ${row.state.migrationIndex ?? 0} of ${release.migrations.length}`;
-  return (row.state.migrationIndex ?? 0) >= release.migrations.length;
+    statements.length === 0 ? null : `Migrations ${row.state.migrationIndex ?? 0} of ${statements.length}`;
+  const done = (row.state.migrationIndex ?? 0) >= statements.length;
+  if (done) await recordMigrations(token, row, release);
+  return done;
 }
 
 async function ensureR2(token: string, row: Installation): Promise<void> {
@@ -184,6 +215,7 @@ function scriptMetadata(env: Env, row: Installation, installerOrigin: string, re
       { type: "plain_text", name: "CF_ACCOUNT_ID", text: row.accountId },
       { type: "plain_text", name: "CF_OAUTH_CLIENT_ID", text: env.OAUTH_CLIENT_ID },
       { type: "plain_text", name: "INSTALLER_ORIGIN", text: installerOrigin },
+      { type: "plain_text", name: "APP_VERSION", text: release.version },
     ],
     assets: {
       jwt,

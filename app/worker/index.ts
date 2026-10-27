@@ -57,6 +57,7 @@ import {
 import { cloudflareRoutes } from "./cloudflare";
 import { installRoutes } from "./install-routes";
 import { llmRoutes } from "./llm";
+import { updateRoutes } from "./update/update-routes";
 import {
   createOrGetShare,
   deleteSharesForNote,
@@ -677,6 +678,7 @@ authed.post("/auth/password", zValidator("json", passwordBody, rejectInvalid), a
 
 authed.route("/cloudflare", cloudflareRoutes);
 authed.route("/llm", llmRoutes);
+authed.route("/update", updateRoutes);
 
 app.route("/api", authed);
 

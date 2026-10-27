@@ -1,13 +1,19 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appDir = path.join(root, "app");
 const releaseDir = path.join(root, "installer", "public", "release");
+const archiveDir = path.join(releaseDir, "archive");
 const bundleDir = path.join(root, "installer", ".wrangler", "pack");
+const notesDir = path.join(root, "release-notes");
+
+/** Releases kept under release/archive/ for rollback and pinned downloads. */
+const KEEP_ARCHIVES = 10;
 
 const MIME = {
   html: "text/html; charset=utf-8",
@@ -29,6 +35,11 @@ const MIME = {
   map: "application/json",
   webmanifest: "application/manifest+json",
 };
+
+function fail(message) {
+  console.error(message);
+  process.exit(1);
+}
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, stdio: "inherit" });
@@ -53,6 +64,48 @@ function splitSql(sql) {
     .filter(Boolean);
 }
 
+/** Same rules as app/shared/version.ts. */
+function parseVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value);
+  if (!match) return null;
+  return { parts: [Number(match[1]), Number(match[2]), Number(match[3])], pre: match[4] ?? "" };
+}
+
+function compareVersions(a, b) {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  if (!left || !right) throw new Error(`Cannot compare versions ${a} and ${b}`);
+  for (let i = 0; i < 3; i++) {
+    if (left.parts[i] !== right.parts[i]) return left.parts[i] < right.parts[i] ? -1 : 1;
+  }
+  if (left.pre === right.pre) return 0;
+  if (!left.pre) return 1;
+  if (!right.pre) return -1;
+  return left.pre < right.pre ? -1 : 1;
+}
+
+/** Every migration starts with `-- @since x.y.z`: the release that first ships it. */
+function migrationSince(name, sql) {
+  const head = sql.split("\n").slice(0, 5).join("\n");
+  const match = /^\s*--\s*@since\s+(\S+)\s*$/m.exec(head);
+  if (!match) fail(`${name} needs a "-- @since x.y.z" header (the release that first ships it).`);
+  if (!parseVersion(match[1])) fail(`${name} has an invalid @since version: ${match[1]}`);
+  return match[1];
+}
+
+/** Front matter keys: `date`, and `rollout` (percent of instances offered the release). */
+function parseNotes(text) {
+  const match = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
+  const meta = {};
+  if (match) {
+    for (const line of match[1].split(/\r?\n/)) {
+      const kv = /^\s*([A-Za-z]+)\s*:\s*(.*?)\s*$/.exec(line);
+      if (kv) meta[kv[1]] = kv[2];
+    }
+  }
+  return { meta, body: (match ? text.slice(match[0].length) : text).trim() };
+}
+
 async function walk(dir) {
   const out = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -63,8 +116,61 @@ async function walk(dir) {
   return out;
 }
 
+async function readArchivedManifests() {
+  if (!existsSync(archiveDir)) return [];
+  const out = [];
+  for (const entry of await readdir(archiveDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const file = path.join(archiveDir, entry.name, "manifest.json");
+    if (!existsSync(file)) continue;
+    try {
+      const manifest = JSON.parse(await readFile(file, "utf8"));
+      if (typeof manifest.version === "string" && parseVersion(manifest.version)) out.push(manifest);
+    } catch {
+      /* skip a broken archive entry */
+    }
+  }
+  return out.sort((a, b) => compareVersions(b.version, a.version));
+}
+
 const pkg = JSON.parse(await readFile(path.join(appDir, "package.json"), "utf8"));
 const wrangler = readJsonc(await readFile(path.join(appDir, "wrangler.jsonc"), "utf8"));
+if (!parseVersion(pkg.version)) fail(`app/package.json has an invalid version: ${pkg.version}`);
+
+const migrationDir = path.join(appDir, "migrations");
+const migrationNames = (await readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort();
+const migrations = [];
+for (const name of migrationNames) {
+  const sql = await readFile(path.join(migrationDir, name), "utf8");
+  const since = migrationSince(name, sql);
+  if (compareVersions(since, pkg.version) > 0) {
+    fail(`${name} is marked @since ${since}, newer than the release being packed (${pkg.version}).`);
+  }
+  const previous = migrations[migrations.length - 1];
+  if (previous && compareVersions(since, previous.since) < 0) {
+    fail(`${name} (@since ${since}) sorts after ${previous.name} (@since ${previous.since}). Keep @since in file order.`);
+  }
+  migrations.push({ name: name.replace(/\.sql$/, ""), since, statements: splitSql(sql) });
+}
+
+const notesFile = path.join(notesDir, `${pkg.version}.md`);
+let notes = null;
+let releasedAt = new Date().toISOString();
+let rolloutPercent = 100;
+if (existsSync(notesFile)) {
+  const parsed = parseNotes(await readFile(notesFile, "utf8"));
+  notes = parsed.body || null;
+  if (parsed.meta.date && !Number.isNaN(Date.parse(parsed.meta.date))) {
+    releasedAt = new Date(parsed.meta.date).toISOString();
+  }
+  if (parsed.meta.rollout !== undefined) {
+    const value = Number(parsed.meta.rollout.replace(/%$/, ""));
+    if (!Number.isFinite(value) || value < 0 || value > 100) fail(`Invalid rollout in ${notesFile}: ${parsed.meta.rollout}`);
+    rolloutPercent = Math.round(value);
+  }
+} else {
+  console.warn(`No release notes at release-notes/${pkg.version}.md; the update dialog will show none.`);
+}
 
 run("pnpm", ["--filter", "dotnote-app", "build"], root);
 await rm(bundleDir, { recursive: true, force: true });
@@ -87,10 +193,8 @@ run(
 
 const bundleFiles = (await readdir(bundleDir)).filter((name) => name.endsWith(".js") && !name.endsWith(".js.map"));
 const workerFile = bundleFiles.includes("index.js") ? "index.js" : bundleFiles[0];
-if (!workerFile) {
-  console.error("wrangler did not write a worker bundle");
-  process.exit(1);
-}
+if (!workerFile) fail("wrangler did not write a worker bundle");
+const workerBytes = await readFile(path.join(bundleDir, workerFile));
 
 const distDir = path.join(appDir, "dist");
 const files = await walk(distDir);
@@ -110,28 +214,66 @@ for (const file of files) {
   if (!byHash.has(hash)) byHash.set(hash, bytes);
 }
 
-const migrationDir = path.join(appDir, "migrations");
-const migrationNames = (await readdir(migrationDir)).filter((name) => name.endsWith(".sql")).sort();
-const migrations = [];
-for (const name of migrationNames) {
-  migrations.push(...splitSql(await readFile(path.join(migrationDir, name), "utf8")));
-}
+const sizeBytes = workerBytes.length + [...byHash.values()].reduce((sum, file) => sum + file.length, 0);
+const manifest = {
+  schema: 2,
+  version: pkg.version,
+  releasedAt,
+  notes,
+  rolloutPercent,
+  license: "SUL-1.0",
+  compatibilityDate: wrangler.compatibility_date,
+  compatibilityFlags: wrangler.compatibility_flags ?? [],
+  workerSha256: createHash("sha256").update(workerBytes).digest("hex"),
+  sizeBytes,
+  migrations,
+  // Flat statement list in file order, for installers that read manifest schema 1.
+  migrationsFlat: migrations.flatMap((file) => file.statements),
+  assets,
+};
 
-await rm(releaseDir, { recursive: true, force: true });
+// Earlier releases stay: files/ is content-addressed and shared, archive/<version>/ keeps each manifest and Worker.
 await mkdir(path.join(releaseDir, "files"), { recursive: true });
-await writeFile(path.join(releaseDir, "worker.js"), await readFile(path.join(bundleDir, workerFile)));
+const versionDir = path.join(archiveDir, pkg.version);
+await rm(versionDir, { recursive: true, force: true });
+await mkdir(versionDir, { recursive: true });
+
+await writeFile(path.join(releaseDir, "worker.js"), workerBytes);
+await writeFile(path.join(versionDir, "worker.js"), workerBytes);
 await writeFile(path.join(releaseDir, "LICENSE.md"), await readFile(path.join(root, "LICENSE.md")));
 for (const [hash, bytes] of byHash) {
   await writeFile(path.join(releaseDir, "files", hash), bytes);
 }
-const manifest = {
-  version: pkg.version,
-  license: "SUL-1.0",
-  compatibilityDate: wrangler.compatibility_date,
-  compatibilityFlags: wrangler.compatibility_flags ?? [],
-  migrations,
-  assets,
-};
+await writeFile(path.join(versionDir, "manifest.json"), JSON.stringify(manifest));
 await writeFile(path.join(releaseDir, "manifest.json"), JSON.stringify(manifest));
-const bytes = (await stat(path.join(releaseDir, "worker.js"))).size + [...byHash.values()].reduce((sum, file) => sum + file.length, 0);
-console.log(`Packed Dotnote ${pkg.version}: ${assets.length} files, worker ${workerFile}, ${bytes} bytes`);
+
+// Trim old archives, then drop asset files that no kept release refers to.
+const archived = await readArchivedManifests();
+for (const old of archived.slice(KEEP_ARCHIVES)) {
+  await rm(path.join(archiveDir, old.version), { recursive: true, force: true });
+}
+const kept = archived.slice(0, KEEP_ARCHIVES);
+const referenced = new Set(kept.flatMap((release) => (release.assets ?? []).map((file) => file.hash)));
+let pruned = 0;
+for (const name of await readdir(path.join(releaseDir, "files"))) {
+  if (referenced.has(name) || byHash.has(name)) continue;
+  await rm(path.join(releaseDir, "files", name), { force: true });
+  pruned += 1;
+}
+await writeFile(
+  path.join(archiveDir, "index.json"),
+  JSON.stringify({
+    latest: pkg.version,
+    releases: kept.map((release) => ({
+      version: release.version,
+      releasedAt: release.releasedAt ?? null,
+      sizeBytes: release.sizeBytes ?? null,
+    })),
+  }),
+);
+
+console.log(
+  `Packed Dotnote ${pkg.version}: ${assets.length} files, worker ${workerFile}, ${sizeBytes} bytes, ` +
+    `${migrations.length} migrations, rollout ${rolloutPercent}%, ${kept.length} archived` +
+    (pruned ? `, pruned ${pruned} unused files` : ""),
+);

@@ -3,6 +3,7 @@ import { ExternalLink, RefreshCw } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { SettingsField, SettingsSectionShell } from "@/components/settings/SettingsSectionShell";
 import { CloudflareMigrationDialog } from "@/components/settings/sections/CloudflareMigrationDialog";
+import { VersionCard } from "@/components/settings/sections/VersionCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -102,6 +103,8 @@ export const CloudflareSettings = observer(function CloudflareSettings() {
             </div>
           </CardContent>
         </Card>
+
+        <VersionCard />
 
         <div className="flex justify-end">
           <Button

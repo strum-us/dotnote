@@ -31,6 +31,7 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { NameDialog } from "@/components/NameDialog";
 import { SyncIndicator } from "@/components/SyncIndicator";
+import { UpdateBanner } from "@/components/update/UpdateBanner";
 import { sidebarTree } from "@/lib/tree-utils";
 
 type DialogState =
@@ -364,6 +365,7 @@ export const TreeSidebar = observer(function TreeSidebar({
           />
         ))}
       </div>
+      <UpdateBanner />
       <div className="flex shrink-0 items-center gap-2 px-3 pb-3 pt-2">
         <span
           className="flex size-8 shrink-0 items-center justify-center rounded-full bg-raised text-[11px] font-medium text-ink-secondary"

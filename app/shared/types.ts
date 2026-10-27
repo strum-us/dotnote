@@ -136,6 +136,58 @@ export type NoteShareStatus = {
   createdAt?: string;
 };
 
+/** Why this instance cannot update itself. Only `missing_scopes` is worth showing outside settings. */
+export type UpdateBlockedReason =
+  | "development"
+  | "no_installer"
+  | "unconfigured"
+  | "not_connected"
+  | "missing_scopes";
+
+export type UpdateStepId = "prepare" | "migrate" | "assets" | "upload" | "deploy" | "verify";
+
+export type UpdateJobView = {
+  id: string;
+  kind: "update" | "rollback";
+  fromVersion: string;
+  toVersion: string;
+  status: "running" | "failed" | "done" | "cancelled";
+  step: { id: UpdateStepId; label: string; index: number; total: number };
+  /** Progress while running, the error once failed. */
+  message: string | null;
+  /** `permission`: reconnect Cloudflare. `unverified`: deployed, but the new version has not answered yet. */
+  errorCode: "permission" | "unverified" | "error" | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+  /** Set while running: call the step endpoint again after this long. */
+  retryAfterMs?: number;
+};
+
+export type UpdateCheckResponse = {
+  checkedAt: string;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  releasedAt: string | null;
+  notes: string | null;
+  sizeBytes: number | null;
+  canUpdate: boolean;
+  blockedReason: UpdateBlockedReason | null;
+  /** A newer release exists but this instance is outside its staged rollout. */
+  rolloutHeld: boolean;
+  /** The version this one updated itself from. Rolling back needs that release to still be archived. */
+  rollbackVersion: string | null;
+  /** The installer could not be reached or sent no usable release. */
+  error: string | null;
+  job: UpdateJobView | null;
+};
+
+export type UpdateStatusResponse = {
+  currentVersion: string;
+  job: UpdateJobView | null;
+};
+
 export type PublicSharePayload = {
   title: string;
   markdown: string;

@@ -189,6 +189,11 @@ class SyncStore {
     };
   }
 
+  /** Resolves once every op queued so far is in IndexedDB, so a reload cannot drop it. */
+  persisted(): Promise<void> {
+    return this.persistChain;
+  }
+
   /** Load the durable queue for `userId` and start sending. Safe to call again on sign-in. */
   async start(userId: string): Promise<void> {
     this.userId = userId;

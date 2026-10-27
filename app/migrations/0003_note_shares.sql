@@ -1,3 +1,4 @@
+-- @since 0.1.0
 CREATE TABLE IF NOT EXISTS note_shares (
   token TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

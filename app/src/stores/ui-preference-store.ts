@@ -27,6 +27,24 @@ const META_KEY = "dotnote:ui-pref:meta";
 const WORKSPACE_KEY_PREFIX = "dotnote:ui-pref:ws:";
 const SIDEBAR_COLLAPSED_KEY = "dotnote:sidebar-collapsed";
 const AI_TRANSLATE_TARGET_KEY = "dotnote:ai-translate-target";
+const DISMISSED_UPDATE_KEY = "dotnote:dismissed-update-version";
+
+function readDismissedUpdate(): string | null {
+  try {
+    return window.localStorage.getItem(DISMISSED_UPDATE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeDismissedUpdate(version: string | null): void {
+  try {
+    if (version) window.localStorage.setItem(DISMISSED_UPDATE_KEY, version);
+    else window.localStorage.removeItem(DISMISSED_UPDATE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 function readAiTranslateTarget(): string {
   try {
@@ -100,6 +118,8 @@ export class UIPreferenceStore {
   docsSort: DocsSortPreference = DEFAULT_DOCS_SORT;
   /** Preferred target for “Translate to …” in the AI bar; defaults from browser locale. */
   aiTranslateTarget = "en";
+  /** Release whose sidebar banner the user put off with “Later”. A newer release shows again. */
+  dismissedUpdateVersion: string | null = null;
   private workspacePrefs = observable.map<string, WorkspaceUIPreferences>();
   private saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private listening = false;
@@ -111,6 +131,7 @@ export class UIPreferenceStore {
       this.sidebarCollapsed = readSidebarCollapsed();
       this.docsSort = readDocsSort();
       this.aiTranslateTarget = readAiTranslateTarget();
+      this.dismissedUpdateVersion = readDismissedUpdate();
       this.ensureStorageVersion();
       this.listenPageExit();
     }
@@ -120,6 +141,12 @@ export class UIPreferenceStore {
     if (!isSupportedLanguageCode(code) || this.aiTranslateTarget === code) return;
     this.aiTranslateTarget = code;
     writeAiTranslateTarget(code);
+  }
+
+  setDismissedUpdateVersion(version: string | null): void {
+    if (this.dismissedUpdateVersion === version) return;
+    this.dismissedUpdateVersion = version;
+    writeDismissedUpdate(version);
   }
 
   setDocsSort(field: DocsSortField, direction: DocsSortDirection): void {

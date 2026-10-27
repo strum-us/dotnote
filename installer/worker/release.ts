@@ -1,12 +1,42 @@
 import type { Env } from "./env";
 
+/** One app migration file. `since` is the release that first shipped it. */
+export type ReleaseMigration = { name: string; since: string; statements: string[] };
+
+/**
+ * `public/release/manifest.json`, written by scripts/pack-release.mjs. Schema 1
+ * had `migrations: string[]`; schema 2 groups them per file and adds what a
+ * running Dotnote reads to update itself (app/worker/update/).
+ */
 export type ReleaseManifest = {
+  schema?: number;
   version: string;
+  releasedAt?: string;
+  notes?: string | null;
+  rolloutPercent?: number;
+  workerSha256?: string;
+  sizeBytes?: number;
   compatibilityDate: string;
   compatibilityFlags: string[];
-  migrations: string[];
+  migrations: string[] | ReleaseMigration[];
+  migrationsFlat?: string[];
   assets: { path: string; hash: string; size: number; contentType: string }[];
 };
+
+/** Every statement in apply order, for either schema. */
+export function flatMigrations(release: ReleaseManifest): string[] {
+  if (release.migrationsFlat) return release.migrationsFlat;
+  return (release.migrations as (string | ReleaseMigration)[]).flatMap((entry) =>
+    typeof entry === "string" ? [entry] : entry.statements,
+  );
+}
+
+/** Migration files with names; empty for a schema 1 manifest. */
+export function migrationFiles(release: ReleaseManifest): ReleaseMigration[] {
+  return (release.migrations as (string | ReleaseMigration)[]).filter(
+    (entry): entry is ReleaseMigration => typeof entry !== "string",
+  );
+}
 
 async function asset(env: Env, path: string): Promise<Response> {
   return env.ASSETS.fetch(new Request(`https://assets.local${path}`));

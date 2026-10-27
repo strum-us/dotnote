@@ -21,6 +21,10 @@ See the "Local development" section of [README.md](./README.md) for ports and th
 ## Before opening a pull request
 
 - Keep components free of direct `fetch` calls and store assignments; call MobX store actions instead (see `docs/local-first.md`).
+- New D1 migrations in `app/migrations/` must follow the self-update rules (see `docs/self-update.md`), because running Dotnotes apply them to themselves before their new code is live:
+  - The first line is `-- @since x.y.z`, the release that first ships the file. `pnpm pack:release` refuses a file without it.
+  - Only add: new tables, columns, and indexes. The previous version keeps serving on top of the migrated database for a minute, and a rollback runs it there indefinitely.
+  - Make every statement safe to run twice (`IF NOT EXISTS`, `INSERT OR IGNORE`). Wrangler-deployed instances may apply a file the updater already ran.
 - Run the checks that apply to your change:
   - App: `pnpm --filter dotnote-app run build`
   - Installer: `pnpm --filter dotnote-installer run typecheck`

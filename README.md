@@ -121,7 +121,7 @@ Requests go from **your Worker** directly to the provider you chose, using your 
 
 ## Updating
 
-- **Guided install:** follow the update prompt/flow provided for your deployment when a new version is announced.
+- **Guided install:** when a new version is out, the sidebar offers it. Dotnote applies the new database migrations and replaces its own Worker using the Cloudflare permission it stored at install, then the page reloads. **Settings › Cloudflare** shows the running version, checks on demand, and can go back to the version you updated from. See [docs/self-update.md](./docs/self-update.md).
 - **From source:** pull the new source, then re-run the deploy:
 
 ```bash
@@ -163,7 +163,7 @@ Local D1 migrations are applied automatically by the dev scripts. Local data sta
 |---|---|
 | `app/` | The Dotnote web app and its Cloudflare Worker API |
 | `installer/` | The guided-install worker (Cloudflare OAuth → deploy into a user's account) |
-| `scripts/pack-release.mjs` | Builds the app bundle the installer deploys |
+| `scripts/pack-release.mjs` | Builds the release the installer deploys and running Dotnotes update to |
 | `docs/` | User and license documentation |
 
 Architecture notes for contributors are in [docs/local-first.md](./docs/local-first.md).

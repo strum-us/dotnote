@@ -10,6 +10,7 @@ import { importStore } from "@/stores/import-store";
 import { noteStore } from "@/stores/note-store";
 import { noteTabsStore } from "@/stores/note-tabs-store";
 import { syncStore } from "@/stores/sync-store";
+import { updateStore } from "@/stores/update-store";
 import { workspaceStore } from "@/stores/workspace-store";
 import { collectNoteIds } from "@/lib/tree-utils";
 import type { SettingsSection } from "@/lib/settings-section";
@@ -80,6 +81,11 @@ export const App = observer(function App() {
 
   useEffect(() => {
     if (userId) void workspaceStore.boot(userId).then(() => importStore.boot(userId));
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    return updateStore.boot();
   }, [userId]);
 
   useEffect(() => {

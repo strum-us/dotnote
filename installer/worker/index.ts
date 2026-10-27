@@ -268,6 +268,17 @@ async function cleanup(env: Env, token: string, row: Installation): Promise<Resp
   return Response.json({ status: "removed", message: null, address: row.address });
 }
 
+// Running Dotnotes fetch releases from here to update themselves. A missing file
+// must be a 404, not the SPA's index.html.
+app.get("/release/*", async (c) => {
+  const res = await c.env.ASSETS.fetch(c.req.raw);
+  const type = res.headers.get("content-type") ?? "";
+  if (res.ok && type.startsWith("text/html")) {
+    return c.json({ error: { code: "not_found", message: "That release file does not exist." } }, 404);
+  }
+  return res;
+});
+
 app.all("*", async (c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default app;

@@ -10,6 +10,8 @@ import type {
   StoredBackup,
   TreeNode,
   AuthSetup,
+  UpdateCheckResponse,
+  UpdateStatusResponse,
   User,
   Workspace,
   WorkspaceManifest,
@@ -168,6 +170,18 @@ export const cloudflareApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+};
+
+export const updateApi = {
+  check: (force = false) => request<UpdateCheckResponse>(`/api/update/check${force ? "?force=1" : ""}`),
+  status: () => request<UpdateStatusResponse>("/api/update/status"),
+  start: (version: string) =>
+    request<UpdateStatusResponse>("/api/update/start", { method: "POST", body: JSON.stringify({ version }) }),
+  rollback: (version: string) =>
+    request<UpdateStatusResponse>("/api/update/rollback", { method: "POST", body: JSON.stringify({ version }) }),
+  step: () => request<UpdateStatusResponse>("/api/update/step", { method: "POST" }),
+  retry: () => request<UpdateStatusResponse>("/api/update/retry", { method: "POST" }),
+  cancel: () => request<UpdateStatusResponse>("/api/update/cancel", { method: "POST" }),
 };
 
 export const llmApi = {

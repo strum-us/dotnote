@@ -1,3 +1,4 @@
+-- @since 0.1.0
 -- One owner per Dotnote. owner_slot is always 1, so a second insert fails.
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
