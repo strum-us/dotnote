@@ -278,9 +278,9 @@ export function isImageInputMimeType(value: string): value is ImageInputMimeType
 export const IMAGE_MODEL_CATALOG: ImageModelOption[] = [
   {
     id: "gemini-2.5-flash-image",
-    label: "Gemini 2.5 Flash Image",
+    label: "Nano Banana · Gemini 2.5 Flash Image",
     provider: "gemini",
-    notes: "Free tier · fast (Nano Banana)",
+    notes: "Free tier · fast",
     supportsImageInput: true,
   },
   {

@@ -1,5 +1,6 @@
 import type { BlockNoteEditor } from "@blocknote/core";
 import { makeAutoObservable, runInAction } from "mobx";
+import { pickImageNoteContext } from "@shared/image-prompt";
 import { aiAnchorBlockId, aiRequestContext, type AiTarget } from "@/lib/ai-editor";
 import { aiImageErrorMessage, base64ToBlob, generateAiImage } from "@/lib/ai-image-generate";
 import { completeImagePlaceholder, insertImagePlaceholder, removeImagePlaceholder } from "@/lib/ai-image-insert";
@@ -130,7 +131,11 @@ class AiStore {
     const id = crypto.randomUUID();
     const placeholderBlockId = insertImagePlaceholder(opts.editor, opts.target, id);
     const ctx = aiRequestContext(opts.target);
-    const context = ctx.selection?.markdown ?? ctx.cursorBlock ?? ctx.document?.slice(0, 80_000);
+    const context = pickImageNoteContext({
+      selectionMarkdown: ctx.selection?.markdown,
+      cursorBlock: ctx.cursorBlock,
+      document: ctx.document,
+    });
     const job: AiImageJob = {
       id,
       noteId: opts.noteId,

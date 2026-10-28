@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { buildImageGenerationPrompt } from "@shared/image-prompt";
 import {
   DEFAULT_IMAGE_ASPECT_RATIO,
   DEFAULT_IMAGE_MODEL,
@@ -424,17 +425,6 @@ const imageGenerateSchema = z.object({
 
 type GeminiImagePart = { inlineData?: { mimeType?: string; data?: string }; text?: string };
 
-function imagePromptText(prompt: string, context: string | undefined, hasSource: boolean): string {
-  const parts: string[] = [];
-  if (context?.trim()) parts.push(`Context from the user's note:\n${context.trim()}`);
-  parts.push(
-    hasSource
-      ? `Edit the attached image to match this description:\n${prompt.trim()}`
-      : `Create an image for this description:\n${prompt.trim()}`,
-  );
-  return parts.join("\n\n");
-}
-
 async function generateGeminiImage(
   apiKey: string,
   model: string,
@@ -448,7 +438,14 @@ async function generateGeminiImage(
   if (sourceImage) {
     userParts.push({ inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.dataBase64 } });
   }
-  userParts.push({ text: imagePromptText(prompt, context, Boolean(sourceImage)) });
+  userParts.push({
+    text: buildImageGenerationPrompt({
+      prompt,
+      context,
+      hasSource: Boolean(sourceImage),
+      modelId: model,
+    }),
+  });
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: "POST",
@@ -499,7 +496,12 @@ async function generateOpenAiImage(
   sourceImage: AiSourceImagePayload | undefined,
   signal: AbortSignal,
 ): Promise<{ mimeType: string; dataBase64: string; caption?: string }> {
-  const promptText = imagePromptText(prompt, context, Boolean(sourceImage));
+  const promptText = buildImageGenerationPrompt({
+    prompt,
+    context,
+    hasSource: Boolean(sourceImage),
+    modelId: model,
+  });
   if (sourceImage) {
     if (model !== "dall-e-2") throw new ProviderError("image_input_unsupported");
     const binary = atob(sourceImage.dataBase64);

@@ -70,7 +70,7 @@ export const AiImageModelSelect = observer(function AiImageModelSelect({
         <button
           type="button"
           className={cn(
-            "flex h-7 max-w-[150px] shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-medium hover:bg-raised disabled:opacity-50",
+            "flex h-7 max-w-[180px] shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-medium hover:bg-raised disabled:opacity-50",
             ready ? "text-dim hover:text-ink" : "text-danger",
           )}
           title={ready ? "Change image model" : "Add an API key for this image model"}
