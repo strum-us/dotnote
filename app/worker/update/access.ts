@@ -39,6 +39,9 @@ export async function cloudflareToken(env: Env): Promise<{ token: string; accoun
     }
     return { token: env.CF_API_TOKEN!.trim(), accountId: access.accountId, scriptName: access.scriptName };
   }
+  if (access.credential !== "grant") {
+    throw new Error("This Dotnote has no Cloudflare permission. Reconnect Cloudflare or store an API token in Settings › Cloudflare.");
+  }
   const scriptName = access.scriptName;
   if (!scriptName) throw new Error("This Dotnote does not know its Worker name.");
   const minted = await mintAccessToken(env);
