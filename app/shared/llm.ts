@@ -199,25 +199,43 @@ export const DEFAULT_IMAGE_ASPECT_RATIO: ImageAspectRatio = "16:9";
 export type ImageModelOption = {
   id: string;
   label: string;
+  provider: LlmProviderId;
   notes?: string;
 };
 
-/** Gemini image models (AI Studio / free tier). */
-export const GEMINI_IMAGE_MODEL_CATALOG: ImageModelOption[] = [
+export const IMAGE_MODEL_CATALOG: ImageModelOption[] = [
   {
     id: "gemini-2.5-flash-image",
     label: "Gemini 2.5 Flash Image",
+    provider: "gemini",
     notes: "Free tier · fast (Nano Banana)",
   },
   {
     id: "gemini-3.1-flash-image",
     label: "Gemini 3.1 Flash Image",
+    provider: "gemini",
     notes: "Higher quality · may require preview access",
+  },
+  {
+    id: "dall-e-3",
+    label: "DALL·E 3",
+    provider: "openai",
+    notes: "OpenAI flagship · follows aspect ratio when supported",
+  },
+  {
+    id: "dall-e-2",
+    label: "DALL·E 2",
+    provider: "openai",
+    notes: "Square 1024×1024 only",
   },
 ];
 
 export function findImageModel(modelId: string): ImageModelOption | undefined {
-  return GEMINI_IMAGE_MODEL_CATALOG.find((m) => m.id === modelId);
+  return IMAGE_MODEL_CATALOG.find((m) => m.id === modelId);
+}
+
+export function getImageModelProvider(modelId: string): LlmProviderId {
+  return findImageModel(modelId)?.provider ?? "gemini";
 }
 
 export function isImageAspectRatio(value: string): value is ImageAspectRatio {

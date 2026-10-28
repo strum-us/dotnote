@@ -39,7 +39,10 @@ export function aiImageErrorMessage(err: unknown): string {
     if (err.message === "no_gemini_key") {
       return "Add a Google Gemini API key in Settings → AI Image.";
     }
-    if (err.status === 429) return "Gemini image quota reached. Try again later or switch models in Settings → AI Image.";
+    if (err.message === "no_openai_key") {
+      return "Add an OpenAI API key in Settings → AI or Settings → AI Image.";
+    }
+    if (err.status === 429) return "Image quota reached. Try again later or switch models in Settings → AI Image.";
     if (err.status === 400) return "That prompt is too long or was blocked by the image model.";
     return `Image generation failed (${err.status}).`;
   }

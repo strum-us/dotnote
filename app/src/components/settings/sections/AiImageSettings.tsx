@@ -3,9 +3,10 @@ import { ExternalLink, KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { toast } from "sonner";
 import {
-  GEMINI_IMAGE_MODEL_CATALOG,
   IMAGE_ASPECT_RATIOS,
+  IMAGE_MODEL_CATALOG,
   findImageModel,
+  getImageModelProvider,
   getLlmProviderMeta,
   type ImageAspectRatio,
 } from "@shared/llm";
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { llmStore } from "@/stores/llm-store";
 
 const geminiMeta = getLlmProviderMeta("gemini");
+const openaiMeta = getLlmProviderMeta("openai");
 
 const aspectOptions = IMAGE_ASPECT_RATIOS.map((ratio) => ({ value: ratio, label: ratio }));
 
@@ -40,14 +42,17 @@ export const AiImageSettings = observer(function AiImageSettings() {
   }, [settings]);
 
   const modelOptions = useMemo(
-    () => GEMINI_IMAGE_MODEL_CATALOG.map((m) => ({ value: m.id, label: m.label })),
+    () => IMAGE_MODEL_CATALOG.map((m) => ({ value: m.id, label: `${m.label} (${getLlmProviderMeta(m.provider).name})` })),
     [],
   );
   const selectedMeta = findImageModel(imageModel);
+  const selectedProvider = getImageModelProvider(imageModel);
   const imageDirty = Boolean(
     settings && (settings.imageModel !== imageModel || settings.imageAspectRatio !== aspectRatio),
   );
   const geminiConfigured = Boolean(settings?.configuredProviders.gemini);
+  const openaiConfigured = Boolean(settings?.configuredProviders.openai);
+  const providerConfigured = selectedProvider === "openai" ? openaiConfigured : geminiConfigured;
 
   const saveImagePrefs = async () => {
     try {
@@ -89,13 +94,15 @@ export const AiImageSettings = observer(function AiImageSettings() {
   return (
     <SettingsSectionShell
       title="AI Image"
-      description="Generate images in notes with Google Gemini (free tier on AI Studio). Keys stay on this Worker; images save to your R2 bucket like pasted uploads."
+      description="Generate images in notes with Google Gemini or OpenAI DALL·E. Keys stay on this Worker; images save to your R2 bucket like pasted uploads."
       className="pb-10"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-ink">Gemini API key</h2>
-          <p className="text-xs text-dim">Image generation uses your Gemini key only — separate from the text model in Settings → AI.</p>
+          <p className="text-xs text-dim">
+            Gemini keys are managed here. OpenAI image models use the same OpenAI key as Settings → AI.
+          </p>
         </div>
         <Button variant="outline" size="icon" onClick={() => void llmStore.refresh()} disabled={llmStore.loading}>
           <RefreshCw className={cn("size-3.5", llmStore.loading && "animate-spin")} />
@@ -202,6 +209,42 @@ export const AiImageSettings = observer(function AiImageSettings() {
         </div>
       ) : null}
 
+      {settings ? (
+        <div className="flex items-center justify-between border border-divider bg-panel p-3">
+          <div className="flex items-center gap-3">
+            <div className="flex size-8 shrink-0 items-center justify-center border border-divider bg-raised">
+              <KeyRound className="size-4 text-dim" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-ink">{openaiMeta.name}</span>
+                {openaiConfigured ? (
+                  <span className="bg-green-500/15 px-1.5 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
+                    Configured
+                  </span>
+                ) : (
+                  <span className="bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                    Not set
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 flex items-center gap-2 text-xs text-dim">
+                {openaiConfigured ? (
+                  <span className="font-mono">{settings.maskedApiKeys.openai ?? "••••••••"}</span>
+                ) : (
+                  <span>Add a key in Settings → AI for DALL·E models.</span>
+                )}
+                <span>·</span>
+                <a href={openaiMeta.docsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center hover:underline">
+                  Platform keys
+                  <ExternalLink className="ml-1 size-2.5" />
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Image model</CardTitle>
@@ -222,8 +265,12 @@ export const AiImageSettings = observer(function AiImageSettings() {
             </SettingsField>
           </div>
           {selectedMeta?.notes ? <p className="text-xs text-dim">{selectedMeta.notes}</p> : null}
-          {!geminiConfigured ? (
-            <p className="text-xs text-danger">Add a Gemini API key above to generate images.</p>
+          {!providerConfigured ? (
+            <p className="text-xs text-danger">
+              {selectedProvider === "openai"
+                ? "Add an OpenAI API key in Settings → AI to generate with this model."
+                : "Add a Gemini API key above to generate images."}
+            </p>
           ) : null}
           <div className="flex justify-end">
             <Button variant="default" onClick={() => void saveImagePrefs()} disabled={llmStore.saving || !imageDirty}>

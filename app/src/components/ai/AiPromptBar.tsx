@@ -497,7 +497,7 @@ export const AiPromptBar = observer(function AiPromptBar({
     phase === "image-done" ||
     phase === "done" ||
     (phase === "error" && (output || imagePreviewUrl));
-  const imageModelLabel = findImageModel(llmStore.settings?.imageModel ?? "")?.label ?? "Gemini image";
+  const imageModelLabel = findImageModel(llmStore.settings?.imageModel ?? "")?.label ?? "Image model";
 
   return (
     <div

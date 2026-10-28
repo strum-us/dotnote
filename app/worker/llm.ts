@@ -9,6 +9,7 @@ import {
   DEFAULT_LLM_PROVIDER,
   IMAGE_ASPECT_RATIOS,
   LLM_PROVIDER_IDS,
+  getImageModelProvider,
   isImageAspectRatio,
   isLlmProviderId,
   type LlmChatMessage,
@@ -412,23 +413,78 @@ async function generateGeminiImage(
   return { mimeType, dataBase64, caption };
 }
 
+function resolveOpenAiImageSize(model: string, aspectRatio: string): "1024x1024" | "1792x1024" | "1024x1792" {
+  if (model === "dall-e-3") {
+    if (aspectRatio === "16:9" || aspectRatio === "4:3") return "1792x1024";
+    if (aspectRatio === "9:16" || aspectRatio === "3:4") return "1024x1792";
+  }
+  return "1024x1024";
+}
+
+async function generateOpenAiImage(
+  apiKey: string,
+  model: string,
+  aspectRatio: string,
+  prompt: string,
+  context: string | undefined,
+  signal: AbortSignal,
+): Promise<{ mimeType: string; dataBase64: string; caption?: string }> {
+  const parts: string[] = [];
+  if (context?.trim()) parts.push(`Context from the user's note:\n${context.trim()}`);
+  parts.push(`Create an image for this description:\n${prompt.trim()}`);
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      prompt: parts.join("\n\n"),
+      size: resolveOpenAiImageSize(model, aspectRatio),
+      response_format: "b64_json",
+      n: 1,
+    }),
+    signal,
+  });
+  if (!res.ok) throw await providerFailure("OpenAI", res);
+  const body = (await res.json()) as { data?: { b64_json?: string; revised_prompt?: string }[] };
+  const item = body.data?.[0];
+  if (!item?.b64_json) {
+    throw new ProviderError("OpenAI did not return an image. Try rephrasing the prompt or switching models.");
+  }
+  return {
+    mimeType: "image/png",
+    dataBase64: item.b64_json,
+    caption: item.revised_prompt?.trim() || undefined,
+  };
+}
+
 llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), async (c) => {
   const input = c.req.valid("json");
   const s = await loadSettings(c.env, c.get("user").id);
-  const apiKey = s.keys.gemini?.trim();
-  if (!apiKey) return c.json({ error: "no_gemini_key" }, 400);
+  const provider = getImageModelProvider(s.imageModel);
+  const apiKey = s.keys[provider]?.trim();
+  if (!apiKey) return c.json({ error: `no_${provider}_key` }, 400);
 
   const upstream = new AbortController();
   c.req.raw.signal?.addEventListener("abort", () => upstream.abort());
   try {
-    const result = await generateGeminiImage(
-      apiKey,
-      s.imageModel,
-      s.imageAspectRatio,
-      input.prompt,
-      input.context,
-      upstream.signal,
-    );
+    const result =
+      provider === "openai"
+        ? await generateOpenAiImage(
+            apiKey,
+            s.imageModel,
+            s.imageAspectRatio,
+            input.prompt,
+            input.context,
+            upstream.signal,
+          )
+        : await generateGeminiImage(
+            apiKey,
+            s.imageModel,
+            s.imageAspectRatio,
+            input.prompt,
+            input.context,
+            upstream.signal,
+          );
     return c.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Image generation failed.";

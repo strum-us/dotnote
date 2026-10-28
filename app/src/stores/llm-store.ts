@@ -1,5 +1,5 @@
 import { makeAutoObservable, runInAction } from "mobx";
-import { LLM_PROVIDER_META, type LlmSettingsView, type UpdateLlmSettings } from "@shared/llm";
+import { LLM_PROVIDER_META, getImageModelProvider, type LlmSettingsView, type UpdateLlmSettings } from "@shared/llm";
 import { llmApi } from "@/lib/api";
 
 class LlmStore {
@@ -25,9 +25,12 @@ class LlmStore {
     return Boolean(this.settings?.configuredProviders[this.settings.activeProvider]);
   }
 
-  /** True when a Gemini key is stored for image generation. */
+  /** True when the selected image model's provider has an API key. */
   get imageReady(): boolean {
-    return Boolean(this.settings?.configuredProviders.gemini);
+    const settings = this.settings;
+    if (!settings) return false;
+    const provider = getImageModelProvider(settings.imageModel);
+    return Boolean(settings.configuredProviders[provider]);
   }
 
   ensureLoaded(): Promise<void> {
