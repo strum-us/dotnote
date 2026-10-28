@@ -21,7 +21,7 @@
   ],
   "vars": {
     "OAUTH_CLIENT_ID": "REPLACE_WITH_CLOUDFLARE_OAUTH_CLIENT_ID",
-    "HQ_URL": "https://hq.example.com",
+    "DOTNOTE_DIAGNOSTICS_URL": "https://diagnostics.example.com",
     "OAUTH_SCOPES": "account-settings.read workers-scripts.read workers-scripts.write d1.read d1.write workers-r2.read workers-r2.write zone.read dns.read dns.write ssl-and-certificates.write workers-routes.write"
   }
 }

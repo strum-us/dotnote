@@ -1,10 +1,18 @@
 import type { Env } from "./env";
+import type { InstallMode } from "./resource-check";
 
 export type InstallState = {
   d1Id?: string;
   r2Name?: string;
   domainId?: string;
   scriptUploaded?: boolean;
+  d1Created?: boolean;
+  r2Created?: boolean;
+  domainCreated?: boolean;
+  d1Adopted?: boolean;
+  r2Adopted?: boolean;
+  workerAdopted?: boolean;
+  installedVersion?: string;
   migrationIndex?: number;
   assetBucket?: number;
   assetBuckets?: string[][];
@@ -25,6 +33,7 @@ export type Installation = {
   address: string;
   handoffHash: string;
   releaseVersion: string;
+  mode: InstallMode;
   stepIndex: number;
   status: string;
   message: string | null;
@@ -45,6 +54,7 @@ type Row = {
   address: string;
   handoffHash: string;
   releaseVersion: string;
+  mode: string;
   stepIndex: number;
   status: string;
   message: string | null;
@@ -55,7 +65,7 @@ type Row = {
 
 const SELECT = `SELECT id, key_hash as keyHash, account_id as accountId, account_name as accountName,
   worker_name as workerName, hostname, zone_id as zoneId, zone_name as zoneName, address,
-  handoff_hash as handoffHash, release_version as releaseVersion, step_index as stepIndex,
+  handoff_hash as handoffHash, release_version as releaseVersion, mode, step_index as stepIndex,
   status, message, state_json as stateJson, created_at as createdAt, updated_at as updatedAt
   FROM installations`;
 
@@ -66,15 +76,15 @@ function mapRow(row: Row): Installation {
   } catch {
     state = {};
   }
-  return { ...row, state };
+  return { ...row, mode: (row.mode as InstallMode) || "fresh", state };
 }
 
 export async function insertInstallation(env: Env, row: Installation): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO installations (
       id, key_hash, account_id, account_name, worker_name, hostname, zone_id, zone_name, address,
-      handoff_hash, release_version, step_index, status, message, state_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      handoff_hash, release_version, mode, step_index, status, message, state_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       row.id,
@@ -88,6 +98,7 @@ export async function insertInstallation(env: Env, row: Installation): Promise<v
       row.address,
       row.handoffHash,
       row.releaseVersion,
+      row.mode,
       row.stepIndex,
       row.status,
       row.message,

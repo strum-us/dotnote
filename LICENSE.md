@@ -7,7 +7,7 @@ Portions of this software are licensed as follows:
 - Source code files that contain `.ee.` in their filename or `.ee` in their dirname are **not** licensed under the Sustainable Use License. Using those files requires a separate commercial license from Strum Technology Corp.
 - All third-party components incorporated into the Dotnote software are licensed under the original license provided by the owner of the applicable component.
 - The Dotnote name, logos, and other trademarks are not licensed under the Sustainable Use License. See [TRADEMARKS.md](./TRADEMARKS.md).
-- Services operated by Strum Technology Corp (including the install site and the central sign-in/directory service) are not part of the software offered under this license, and no rights are granted to their source code, which is not included in this repository.
+- Services operated by Strum Technology Corp (including the install site and the optional diagnostics service) are not part of the software offered under this license, and no rights are granted to their source code, which is not included in this repository.
 - Content outside of the above-mentioned files or restrictions is available under the "Sustainable Use License" as defined below.
 
 A plain-language summary is available in [docs/license-faq.md](./docs/license-faq.md). That summary is for convenience only; if it differs from the license text below, the license text controls.

@@ -1,4 +1,5 @@
 import { makeAutoObservable, runInAction } from "mobx";
+import type { DiagnosticsStatus } from "@shared/diagnostics";
 import type { AuthSetup, User } from "@shared/types";
 import { ApiError, authApi } from "@/lib/api";
 
@@ -15,6 +16,7 @@ const AUTH_COPY: Record<string, string> = {
   no_cloudflare_account: "This Dotnote has no Cloudflare account on file, so the password cannot be reset from here.",
   cf_unproven: "That Cloudflare login does not own this Dotnote.",
   account_missing: "Create the owner account before resetting the password.",
+  diagnostics_unreachable: "Dotnote Cloud could not be reached. Try again.",
 };
 
 function readCachedUser(): User | null {
@@ -52,6 +54,9 @@ class AuthStore {
   error: string | null = null;
   setup: AuthSetup | null = null;
   setupError: string | null = null;
+  diagnostics: DiagnosticsStatus | null = null;
+  diagnosticsError: string | null = null;
+  diagnosticsSaving = false;
 
   private bootPromise: Promise<void> | null = null;
   private setupPromise: Promise<void> | null = null;
@@ -132,11 +137,16 @@ class AuthStore {
     }
   }
 
-  async createAccount(fullName: string, email: string, password: string): Promise<boolean> {
+  async createAccount(
+    fullName: string,
+    email: string,
+    password: string,
+    diagnosticsConsent: boolean,
+  ): Promise<boolean> {
     this.loading = true;
     this.error = null;
     try {
-      const { user } = await authApi.createAccount(fullName, email, password);
+      const { user } = await authApi.createAccount(fullName, email, password, diagnosticsConsent);
       writeCachedUser(user);
       runInAction(() => {
         this.user = user;
@@ -168,6 +178,40 @@ class AuthStore {
       runInAction(() => {
         this.error = authMessage(error, "That email or password is wrong.");
         this.loading = false;
+      });
+      return false;
+    }
+  }
+
+  async loadDiagnostics(): Promise<void> {
+    try {
+      const diagnostics = await authApi.diagnostics();
+      runInAction(() => {
+        this.diagnostics = diagnostics;
+        this.diagnosticsError = diagnostics.reportError;
+      });
+    } catch (error) {
+      runInAction(() => {
+        this.diagnosticsError = authMessage(error, "Could not load diagnostics settings.");
+      });
+    }
+  }
+
+  async setDiagnosticsConsent(consent: boolean, unregister: boolean): Promise<boolean> {
+    this.diagnosticsSaving = true;
+    this.diagnosticsError = null;
+    try {
+      const diagnostics = await authApi.setDiagnostics(consent, unregister);
+      runInAction(() => {
+        this.diagnostics = diagnostics;
+        this.diagnosticsError = diagnostics.reportError;
+        this.diagnosticsSaving = false;
+      });
+      return diagnostics.reportError === null;
+    } catch (error) {
+      runInAction(() => {
+        this.diagnosticsError = authMessage(error, "Could not update diagnostics settings.");
+        this.diagnosticsSaving = false;
       });
       return false;
     }

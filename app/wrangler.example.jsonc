@@ -28,7 +28,8 @@
     }
   ],
   "vars": {
-    "HQ_URL": "https://hq.example.com",
+    "DOTNOTE_DIAGNOSTICS_ENABLED": "false",
+    "DOTNOTE_DIAGNOSTICS_URL": "https://diagnostics.example.com",
     "WORKER_NAME": "dotnote",
     "R2_BUCKET_NAME": "dotnote-data",
     "D1_DATABASE_NAME": "dotnote-index",

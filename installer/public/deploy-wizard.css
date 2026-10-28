@@ -173,6 +173,30 @@ html.dark .install-main {
   cursor: default;
 }
 
+.install-wizard button.danger {
+  background: var(--error);
+  color: #fff;
+}
+
+.install-wizard button.danger:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.install-wizard .danger-zone {
+  margin-top: 1.25rem;
+  padding: 0.85rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid rgb(220 38 38 / 35%);
+  background: rgb(220 38 38 / 6%);
+}
+
+.install-wizard .danger-zone summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--error);
+}
+
 .install-wizard .row {
   display: flex;
   flex-wrap: wrap;

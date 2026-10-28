@@ -9,6 +9,9 @@ export type User = {
 export type AuthSetup = {
   needsAccount: boolean;
   installerOrigin: string | null;
+  /** True when this deployment can register with Dotnote Cloud. Consent is still required. */
+  diagnosticsAvailable: boolean;
+  diagnosticsHost: string | null;
 };
 
 export type Workspace = {

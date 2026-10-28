@@ -49,7 +49,7 @@ const MIGRATIONS_PER_STEP = 5;
  * still holds the values. CF_GRANT_KEY is never regenerated: a new key could
  * not decrypt the stored Cloudflare grant.
  */
-const KEPT_SECRETS = ["CF_GRANT_KEY", "DOTNOTE_HANDOFF", "HQ_DIRECTORY_TOKEN"] as const;
+const KEPT_SECRETS = ["CF_GRANT_KEY", "DOTNOTE_HANDOFF", "DOTNOTE_DIAGNOSTICS_TOKEN"] as const;
 const SECRET_TYPES = new Set(["secret_text", "secret_key"]);
 /** Bindings that point at extra module parts. The upload only sends index.js, so these cannot be carried. */
 const PART_BINDING_TYPES = new Set(["wasm_module", "text_blob", "data_blob"]);

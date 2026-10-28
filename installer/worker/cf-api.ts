@@ -21,6 +21,16 @@ export function isMissing(err: unknown): boolean {
   return err.status === 404 || err.code === 10007 || /not found|does not exist/i.test(err.message);
 }
 
+const CF_TIMEOUT_MS = 20_000;
+
+export type ScriptBinding = { type: string; name: string; [key: string]: unknown };
+
+export type ScriptSettings = {
+  bindings?: ScriptBinding[];
+  compatibility_date?: string;
+  compatibility_flags?: string[];
+};
+
 export async function cfEnvelope<T>(
   token: string,
   method: string,
@@ -33,7 +43,12 @@ export async function cfEnvelope<T>(
     headers.set("content-type", "application/json");
     payload = JSON.stringify(body);
   }
-  const res = await fetch(`https://api.cloudflare.com/client/v4${path}`, { method, headers, body: payload });
+  const res = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+    method,
+    headers,
+    body: payload,
+    signal: AbortSignal.timeout(CF_TIMEOUT_MS),
+  });
   const text = await res.text();
   let json: Envelope<T>;
   try {
@@ -92,6 +107,38 @@ export async function scriptExists(token: string, accountId: string, name: strin
     return true;
   } catch (err) {
     if (isMissing(err)) return false;
+    throw err;
+  }
+}
+
+export async function scriptSettings(token: string, accountId: string, scriptName: string): Promise<ScriptSettings> {
+  return cf<ScriptSettings>(token, "GET", `/accounts/${accountId}/workers/scripts/${scriptName}/settings`);
+}
+
+export async function findWorkersDomainService(
+  token: string,
+  accountId: string,
+  hostname: string,
+): Promise<string | null> {
+  const hit = await findWorkersDomain(token, accountId, hostname);
+  return hit?.service ?? null;
+}
+
+export async function findWorkersDomain(
+  token: string,
+  accountId: string,
+  hostname: string,
+): Promise<{ id: string; service: string } | null> {
+  try {
+    const rows = await cf<{ id: string; hostname: string; service: string }[]>(
+      token,
+      "GET",
+      `/accounts/${accountId}/workers/domains?hostname=${encodeURIComponent(hostname)}`,
+    );
+    const hit = (rows ?? []).find((row) => row.hostname === hostname);
+    return hit ? { id: hit.id, service: hit.service } : null;
+  } catch (err) {
+    if (isMissing(err)) return null;
     throw err;
   }
 }
@@ -164,8 +211,30 @@ function routeCovers(pattern: string, hostname: string): boolean {
   return false;
 }
 
+type D1QueryResult = { results?: Record<string, unknown>[] };
+
 export async function d1Query(token: string, accountId: string, databaseId: string, sql: string): Promise<void> {
-  await cf(token, "POST", `/accounts/${accountId}/d1/database/${databaseId}/query`, { sql });
+  await d1QueryRaw(token, accountId, databaseId, sql);
+}
+
+export async function d1QueryRows<T extends Record<string, unknown>>(
+  token: string,
+  accountId: string,
+  databaseId: string,
+  sql: string,
+): Promise<T[]> {
+  const batches = await d1QueryRaw(token, accountId, databaseId, sql);
+  const first = batches[0];
+  return (first?.results ?? []) as T[];
+}
+
+async function d1QueryRaw(
+  token: string,
+  accountId: string,
+  databaseId: string,
+  sql: string,
+): Promise<D1QueryResult[]> {
+  return cf<D1QueryResult[]>(token, "POST", `/accounts/${accountId}/d1/database/${databaseId}/query`, { sql });
 }
 
 export async function createD1(token: string, accountId: string, name: string): Promise<string> {
@@ -293,6 +362,28 @@ export async function deleteD1(token: string, accountId: string, databaseId: str
 
 export async function deleteR2(token: string, accountId: string, name: string): Promise<void> {
   await ignoreMissing(cf(token, "DELETE", `/accounts/${accountId}/r2/buckets/${name}`));
+}
+
+export async function purgeR2Bucket(token: string, accountId: string, bucketName: string): Promise<void> {
+  let cursor: string | undefined;
+  for (let page = 0; page < 500; page++) {
+    const path = cursor
+      ? `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?limit=1000&cursor=${encodeURIComponent(cursor)}`
+      : `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?limit=1000`;
+    const listed = await cf<{ objects?: { key: string }[]; cursor?: string; truncated?: boolean }>(
+      token,
+      "GET",
+      path,
+    );
+    const keys = (listed.objects ?? []).map((row) => row.key).filter(Boolean);
+    if (keys.length) {
+      await cf(token, "POST", `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects/delete`, {
+        objects: keys.map((key) => ({ key })),
+      });
+    }
+    if (!listed.truncated || !listed.cursor || listed.cursor === cursor) break;
+    cursor = listed.cursor;
+  }
 }
 
 export async function deleteDomain(token: string, accountId: string, domainId: string): Promise<void> {

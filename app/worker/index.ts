@@ -11,9 +11,15 @@ import {
   ownerExists,
   proveCloudflareAccount,
   resetOwnerPassword,
-  type DirectoryProfile,
 } from "./accounts";
-import { publishProfile } from "./hq-client";
+import {
+  DIAGNOSTICS_REPORT_ERROR,
+  diagnosticsOffer,
+  diagnosticsStatus,
+  grantAndReport,
+  reportDiagnostics,
+  withdrawDiagnostics,
+} from "./diagnostics";
 import {
   appendHistory,
   deleteNoteObject,
@@ -94,7 +100,12 @@ const email = z
   .transform((value) => value.toLowerCase());
 const fullName = z.string().trim().min(1).max(80);
 
-const accountBody = z.object({ fullName, email, password });
+const accountBody = z.object({
+  fullName,
+  email,
+  password,
+  diagnosticsConsent: z.boolean().optional().default(false),
+});
 const loginBody = z.object({ email, password });
 const passwordBody = z.object({
   currentPassword: password,
@@ -105,18 +116,16 @@ const recoverBody = z.object({
   password,
 });
 
-function directoryProfile(env: Env, origin: string, user: { fullName: string; email: string }): DirectoryProfile {
-  const accountId = env.CF_ACCOUNT_ID?.trim() || null;
-  const workerName = env.WORKER_NAME?.trim() || null;
-  return { fullName: user.fullName, email: user.email, cfAccountId: accountId, workerName, workerUrl: origin };
-}
-
-function publishOwner(env: Env, origin: string, user: { fullName: string; email: string }, waitUntil: (promise: Promise<unknown>) => void) {
-  const profile = directoryProfile(env, origin, user);
+function scheduleDiagnosticsReport(
+  env: Env,
+  origin: string,
+  userId: string,
+  waitUntil: (promise: Promise<unknown>) => void,
+) {
   waitUntil(
-    publishProfile(env, profile).catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : "directory_failed";
-      console.error(JSON.stringify({ event: "directory_profile_failed", error: message }));
+    reportDiagnostics(env, userId, origin).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : "diagnostics_failed";
+      console.error(JSON.stringify({ event: "diagnostics_report_failed", error: message }));
     }),
   );
 }
@@ -126,6 +135,7 @@ app.get("/api/auth/setup", async (c) => {
   return c.json({
     needsAccount,
     installerOrigin: c.env.INSTALLER_ORIGIN?.replace(/\/$/, "") || null,
+    ...diagnosticsOffer(c.env),
   });
 });
 
@@ -142,7 +152,9 @@ app.post("/api/auth/account", zValidator("json", accountBody, rejectInvalid), as
     const created = await createOwner(c.env, body);
     if (!created.ok) return c.json({ error: created.error }, 409);
     await createSession(c, created.user);
-    publishOwner(c.env, new URL(c.req.url).origin, created.user, (promise) => c.executionCtx.waitUntil(promise));
+    scheduleDiagnosticsReport(c.env, new URL(c.req.url).origin, created.user.id, (promise) =>
+      c.executionCtx.waitUntil(promise),
+    );
     return c.json({ user: created.user });
   } catch (err) {
     return c.json({ error: authErrorCode(err) }, 500);
@@ -169,7 +181,7 @@ app.post("/api/auth/recover", zValidator("json", recoverBody, rejectInvalid), as
   try {
     const user = await resetOwnerPassword(c.env, body.password);
     if (!user) return c.json({ error: "account_missing" }, 404);
-    publishOwner(c.env, new URL(c.req.url).origin, user, (promise) => c.executionCtx.waitUntil(promise));
+    scheduleDiagnosticsReport(c.env, new URL(c.req.url).origin, user.id, (promise) => c.executionCtx.waitUntil(promise));
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ error: authErrorCode(err) }, 500);
@@ -673,6 +685,48 @@ authed.delete("/workspaces/:id/notes/:noteId/share", async (c) => {
   await revokeShare(c.env, workspaceId, noteId);
   return c.json({ active: false });
 });
+
+authed.get("/account/diagnostics", async (c) => {
+  const origin = new URL(c.req.url).origin;
+  let reportError: string | null = null;
+  try {
+    await reportDiagnostics(c.env, c.get("user").id, origin);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "diagnostics_failed";
+    console.error(JSON.stringify({ event: "diagnostics_report_failed", error: message }));
+    reportError = DIAGNOSTICS_REPORT_ERROR;
+  }
+  const status = await diagnosticsStatus(c.env, c.get("user").id, origin, reportError);
+  if (!status) return c.json({ error: "account_missing" }, 404);
+  return c.json(status);
+});
+
+authed.patch(
+  "/account/diagnostics",
+  zValidator("json", z.object({ consent: z.boolean(), unregister: z.boolean().optional().default(false) })),
+  async (c) => {
+    const user = c.get("user");
+    const origin = new URL(c.req.url).origin;
+    const body = c.req.valid("json");
+    let reportError: string | null = null;
+    try {
+      if (body.consent) {
+        await grantAndReport(c.env, user.id, origin);
+      } else {
+        await withdrawDiagnostics(c.env, user.id, origin, body.unregister);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "diagnostics_failed";
+      console.error(JSON.stringify({ event: "diagnostics_report_failed", error: message }));
+      reportError = body.consent
+        ? DIAGNOSTICS_REPORT_ERROR
+        : "Sending is off, but Dotnote Cloud still has this registration. Try deleting it again.";
+    }
+    const status = await diagnosticsStatus(c.env, user.id, origin, reportError);
+    if (!status) return c.json({ error: "account_missing" }, 404);
+    return c.json(status);
+  },
+);
 
 authed.post("/auth/password", zValidator("json", passwordBody, rejectInvalid), async (c) => {
   const body = c.req.valid("json");

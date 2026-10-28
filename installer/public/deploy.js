@@ -3,6 +3,7 @@ const fine = document.querySelector("#fine");
 const stepList = document.querySelector("#step-list");
 
 const WIZARD = ["Connect", "Account", "Name", "Address", "Review", "Deploy", "Open"];
+const API_TIMEOUT_MS = 20_000;
 
 let deployLogLabels = [];
 
@@ -107,11 +108,20 @@ function initStepList() {
 
 async function api(path, body) {
   const access = await ensureAccess();
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
+      body: JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error("That request took too long. Check your connection and try again.");
+    }
+    throw err;
+  }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     const message = json.error?.message || json.message || "Cloudflare or the installer rejected that request.";
@@ -364,7 +374,7 @@ function showName() {
     h("p", { class: "lead" }, "The Worker, D1 database, and R2 bucket use this name."),
     h("label", { for: "worker-name" }, "Name"),
     input,
-    h("p", { class: "hint" }, "Lowercase letters, digits, and dashes. Existing names are refused."),
+    h("p", { class: "hint" }, "Lowercase letters, digits, and dashes. An existing Dotnote can be updated on the review step."),
     h("button", { onclick: () => void showAddress() }, "Continue"),
   );
 }
@@ -433,6 +443,102 @@ function chosenHostname() {
   return `${hostPrefix}.${zone.name}`;
 }
 
+function resourceStatusLabel(kind) {
+  if (kind === "free") return "available";
+  if (kind === "dotnote") return "your Dotnote";
+  if (kind === "foreign") return "in use by something else";
+  if (kind === "unknown") return "could not verify";
+  return kind;
+}
+
+function renderReview(address, hostname) {
+  const blocked = checkResult.suggestedMode === "blocked";
+  const mode = checkResult.suggestedMode;
+  const releaseLine = config.releaseVersion ? `Release ${config.releaseVersion}` : "Release";
+  const installed = checkResult.installedVersion ? `Installed ${checkResult.installedVersion}` : null;
+  let actionHint = "Nothing already in the account is changed.";
+  if (mode === "update") {
+    actionHint = "Update replaces the Worker and static files. Your D1 index and R2 notes stay in place.";
+  } else if (mode === "repair") {
+    actionHint = "Repair reuses your data and fills in anything missing.";
+  }
+
+  const primaryLabel =
+    mode === "update" ? "Update Dotnote" : mode === "repair" ? "Repair Dotnote" : "Deploy Dotnote";
+
+  const danger = h("details", { class: "danger-zone" },
+    h("summary", {}, "Danger: delete all Dotnote data and reinstall"),
+    h("p", { class: "hint" }, "This removes the Worker, D1 database, and every object in the R2 bucket. It cannot be undone."),
+    h("label", { for: "wipe-confirm-name" }, `Type ${workerName} to confirm`),
+    h("input", { type: "text", id: "wipe-confirm-name", autocomplete: "off" }),
+    h("button", {
+      class: "danger",
+      onclick: () => void confirmWipe(address, hostname, document.getElementById("wipe-confirm-name")?.value ?? ""),
+    }, "Delete data and reinstall"),
+  );
+
+  shell(
+    4,
+    mode === "update" ? "Update your Dotnote" : "Check before you deploy",
+    h("p", { class: "lead" }, `${account.name}`),
+    h("ul", { class: "list" },
+      h("li", {}, `Worker ${workerName} · ${resourceStatusLabel(checkResult.worker)}`),
+      h("li", {}, `D1 ${workerName}-index · ${resourceStatusLabel(checkResult.database)}`),
+      h("li", {}, `R2 ${workerName}-data · ${resourceStatusLabel(checkResult.bucket)}`),
+      h("li", {}, address),
+      h("li", {}, installed ? `${releaseLine} (from ${installed})` : releaseLine),
+    ),
+    blocked
+      ? h("p", { class: "error" }, checkResult.blockReason || "This install cannot continue.")
+      : h("p", { class: "hint" }, actionHint),
+    h("div", { class: "row" },
+      h("button", { class: "ghost", onclick: () => renderAddress() }, "Back"),
+      h("button", {
+        disabled: blocked,
+        onclick: () => void (mode === "update" || mode === "repair"
+          ? showUpdateConsent(address, hostname, mode)
+          : startDeploy(address, hostname, "fresh")),
+      }, primaryLabel),
+    ),
+    !blocked && (mode === "update" || mode === "repair" || checkResult.worker === "dotnote") ? danger : null,
+  );
+}
+
+function showUpdateConsent(address, hostname, mode) {
+  const releaseLine = config.releaseVersion ? `Release ${config.releaseVersion}` : "the new release";
+  shell(
+    4,
+    mode === "update" ? "Confirm update" : "Confirm repair",
+    h("p", { class: "lead" }, `Replace Worker ${workerName} with ${releaseLine}.`),
+    h("p", { class: "hint" }, "Your notes in R2 and account data in D1 are kept. The site may be unavailable for up to a minute."),
+    h("div", { class: "row" },
+      h("button", { class: "ghost", onclick: () => renderReview(address, hostname) }, "Back"),
+      h("button", { onclick: () => void startDeploy(address, hostname, mode) }, mode === "update" ? "Update Worker" : "Repair Dotnote"),
+    ),
+  );
+}
+
+async function confirmWipe(address, hostname, typed) {
+  if (typed.trim() !== workerName) {
+    shell(
+      4,
+      "Check before you deploy",
+      h("p", { class: "error" }, `Type ${workerName} exactly to confirm data deletion.`),
+      h("button", { class: "ghost", onclick: () => renderReview(address, hostname) }, "Back"),
+    );
+    return;
+  }
+  shell(
+    4,
+    "Delete all Dotnote data?",
+    h("p", { class: "error" }, "This permanently deletes notes in R2 and accounts in D1 for this name."),
+    h("div", { class: "row" },
+      h("button", { class: "ghost", onclick: () => renderReview(address, hostname) }, "Cancel"),
+      h("button", { class: "danger", onclick: () => void startDeploy(address, hostname, "wipe", true, typed.trim()) }, "Delete everything and reinstall"),
+    ),
+  );
+}
+
 async function showReview() {
   const hostname = chosenHostname();
   if (addressMode === "domain" && !hostname) {
@@ -444,49 +550,55 @@ async function showReview() {
     return;
   }
   shell(4, "Check before you deploy", h("p", { class: "hint" }, "Checking names…"));
-  checkResult = await api("/api/check", {
-    accountId: account.id,
-    workerName,
-    hostname: hostname || "",
-    zoneId: hostname ? zone.id : "",
-    zoneName: hostname ? zone.name : "",
-  });
-  const problems = [];
-  if (checkResult.worker !== "free") problems.push("That Worker name is taken.");
-  if (checkResult.database !== "free") problems.push("That D1 database name is taken.");
-  if (checkResult.bucket !== "free") problems.push("That R2 bucket name is taken.");
-  if (hostname && checkResult.hostname && !checkResult.hostname.ok) problems.push(checkResult.hostname.detail);
+  try {
+    checkResult = await api("/api/check", {
+      accountId: account.id,
+      workerName,
+      hostname: hostname || "",
+      zoneId: hostname ? zone.id : "",
+      zoneName: hostname ? zone.name : "",
+    });
+  } catch (err) {
+    shell(
+      4,
+      "Check before you deploy",
+      h("p", { class: "error" }, err instanceof Error ? err.message : "Could not check this account."),
+      h("div", { class: "row" },
+        h("button", { class: "ghost", onclick: () => renderAddress() }, "Back"),
+        h("button", { onclick: () => void showReview() }, "Try again"),
+      ),
+    );
+    return;
+  }
   const address = hostname ? `https://${hostname}` : `https://${workerName}.${account.workersDevSubdomain}.workers.dev`;
-  shell(
-    4,
-    "Check before you deploy",
-    h("p", { class: "lead" }, `${account.name}`),
-    h("ul", { class: "list" },
-      h("li", {}, `Worker ${workerName}`),
-      h("li", {}, `D1 ${workerName}-index`),
-      h("li", {}, `R2 ${workerName}-data`),
-      h("li", {}, address),
-      h("li", {}, config.releaseVersion ? `Release ${config.releaseVersion}` : "Release"),
-    ),
-    problems.length ? h("p", { class: "error" }, problems.join(" ")) : h("p", { class: "hint" }, "Nothing already in the account is changed."),
-    h("div", { class: "row" },
-      h("button", { class: "ghost", onclick: () => renderAddress() }, "Back"),
-      h("button", { disabled: problems.length > 0, onclick: () => void startDeploy(address, hostname) }, "Deploy Dotnote"),
-    ),
-  );
+  renderReview(address, hostname);
 }
 
-async function startDeploy(address, hostname) {
+async function startDeploy(address, hostname, mode = "fresh", confirmWipe = false, workerNameConfirm = "") {
   const code = randomHex(32);
   const handoffHash = await sha256Hex(code);
-  const created = await api("/api/installations", {
-    accountId: account.id,
-    workerName,
-    hostname: hostname || "",
-    zoneId: hostname ? zone.id : "",
-    zoneName: hostname ? zone.name : "",
-    handoffHash,
-  });
+  let created;
+  try {
+    created = await api("/api/installations", {
+      accountId: account.id,
+      workerName,
+      hostname: hostname || "",
+      zoneId: hostname ? zone.id : "",
+      zoneName: hostname ? zone.name : "",
+      handoffHash,
+      mode,
+      confirmWipe: confirmWipe || undefined,
+      workerNameConfirm: workerNameConfirm || undefined,
+    });
+  } catch (err) {
+    shell(
+      4,
+      "Check before you deploy",
+      h("p", { class: "error" }, err instanceof Error ? err.message : "Could not start the install."),
+      h("button", { onclick: () => void showReview() }, "Back to review"),
+    );
+    return;
+  }
   saveInstall(created.installationId, { key: created.key, code, address: created.address || address, accountId: account.id });
   sessionSet("dotnote.install.current", created.installationId);
   await runDeploy(created.installationId);

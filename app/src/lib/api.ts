@@ -16,6 +16,7 @@ import type {
   Workspace,
   WorkspaceManifest,
 } from "@shared/types";
+import type { DiagnosticsStatus } from "@shared/diagnostics";
 import type { LlmSettingsView, UpdateLlmSettings } from "@shared/llm";
 
 export type { TreeNode };
@@ -56,10 +57,16 @@ function parseErrorBody(text: string): unknown {
 export const authApi = {
   setup: () => request<AuthSetup>("/api/auth/setup"),
   me: () => request<{ user: User | null }>("/api/auth/me"),
-  createAccount: (fullName: string, email: string, password: string) =>
+  createAccount: (fullName: string, email: string, password: string, diagnosticsConsent: boolean) =>
     request<{ user: User }>("/api/auth/account", {
       method: "POST",
-      body: JSON.stringify({ fullName, email, password }),
+      body: JSON.stringify({ fullName, email, password, diagnosticsConsent }),
+    }),
+  diagnostics: () => request<DiagnosticsStatus>("/api/account/diagnostics"),
+  setDiagnostics: (consent: boolean, unregister = false) =>
+    request<DiagnosticsStatus>("/api/account/diagnostics", {
+      method: "PATCH",
+      body: JSON.stringify({ consent, unregister }),
     }),
   login: (email: string, password: string) =>
     request<{ user: User }>("/api/auth/login", {

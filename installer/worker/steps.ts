@@ -3,6 +3,7 @@ import {
   createD1,
   createR2,
   d1Query,
+  d1QueryRows,
   deleteD1,
   deleteDomain,
   deleteR2,
@@ -10,14 +11,19 @@ import {
   enableSubdomain,
   findD1,
   findR2,
+  findWorkersDomain,
   hostnameConflict,
+  purgeR2Bucket,
   putScript,
   putSecret,
   scriptExists,
+  scriptSettings,
   startAssetSession,
   uploadAssetBucket,
   workersSubdomain,
+  type ScriptBinding,
 } from "./cf-api";
+import { compareVersions } from "./resource-check";
 import { bytesToBase64, randomGrantKey } from "./crypto";
 import type { Env } from "./env";
 import type { Installation } from "./install-store";
@@ -75,15 +81,65 @@ function publish(row: Installation, retryAfterMs?: number): StepView {
   return view;
 }
 
+async function wipeResources(token: string, row: Installation): Promise<void> {
+  const bucket = bucketName(row.workerName);
+  const d1Id = await findD1(token, row.accountId, dbName(row.workerName));
+  if (row.hostname) {
+    const domain = await findWorkersDomain(token, row.accountId, row.hostname);
+    if (domain) await deleteDomain(token, row.accountId, domain.id);
+  }
+  if (await scriptExists(token, row.accountId, row.workerName)) {
+    await deleteScript(token, row.accountId, row.workerName);
+  }
+  if (await findR2(token, row.accountId, bucket)) {
+    await purgeR2Bucket(token, row.accountId, bucket);
+    await deleteR2(token, row.accountId, bucket);
+  }
+  if (d1Id) await deleteD1(token, row.accountId, d1Id);
+  row.state = {};
+}
+
+async function adoptExistingResources(token: string, row: Installation): Promise<void> {
+  const d1Id = await findD1(token, row.accountId, dbName(row.workerName));
+  if (d1Id) {
+    row.state.d1Id = d1Id;
+    row.state.d1Adopted = true;
+  }
+  const bucket = bucketName(row.workerName);
+  if (await findR2(token, row.accountId, bucket)) {
+    row.state.r2Name = bucket;
+    row.state.r2Adopted = true;
+  }
+  if (await scriptExists(token, row.accountId, row.workerName)) {
+    row.state.workerAdopted = true;
+    try {
+      const settings = await scriptSettings(token, row.accountId, row.workerName);
+      const version = (settings.bindings ?? []).find(
+        (binding) => binding.name === "APP_VERSION" && binding.type === "plain_text",
+      );
+      if (version && typeof version.text === "string") row.state.installedVersion = version.text;
+    } catch {
+      /* The Worker exists but settings could not be read. */
+    }
+  }
+}
+
 async function checkAccount(token: string, row: Installation): Promise<void> {
-  if (!row.state.scriptUploaded && (await scriptExists(token, row.accountId, row.workerName))) {
-    throw new Error(`A Worker named ${row.workerName} is already in this account.`);
+  if (row.mode === "wipe") {
+    await wipeResources(token, row);
   }
-  if (!row.state.d1Id && (await findD1(token, row.accountId, dbName(row.workerName)))) {
-    throw new Error(`A D1 database named ${dbName(row.workerName)} is already in this account.`);
-  }
-  if (!row.state.r2Name && (await findR2(token, row.accountId, bucketName(row.workerName)))) {
-    throw new Error(`An R2 bucket named ${bucketName(row.workerName)} is already in this account.`);
+  if (row.mode === "update" || row.mode === "repair") {
+    await adoptExistingResources(token, row);
+  } else if (row.mode === "fresh") {
+    if (await scriptExists(token, row.accountId, row.workerName)) {
+      throw new Error(`A Worker named ${row.workerName} is already in this account.`);
+    }
+    if (await findD1(token, row.accountId, dbName(row.workerName))) {
+      throw new Error(`A D1 database named ${dbName(row.workerName)} is already in this account.`);
+    }
+    if (await findR2(token, row.accountId, bucketName(row.workerName))) {
+      throw new Error(`An R2 bucket named ${bucketName(row.workerName)} is already in this account.`);
+    }
   }
   if (!row.hostname) {
     const subdomain = await workersSubdomain(token, row.accountId);
@@ -93,7 +149,7 @@ async function checkAccount(token: string, row: Installation): Promise<void> {
       );
     }
     row.state.subdomain = subdomain;
-  } else if (row.zoneId && row.zoneName) {
+  } else if (row.zoneId && row.zoneName && row.mode === "fresh") {
     const conflict = await hostnameConflict(token, row.zoneId, row.zoneName, row.hostname);
     if (conflict) throw new Error(conflict);
   }
@@ -104,10 +160,12 @@ async function ensureD1(token: string, row: Installation): Promise<void> {
   const name = dbName(row.workerName);
   try {
     row.state.d1Id = await createD1(token, row.accountId, name);
+    row.state.d1Created = true;
   } catch (err) {
     const existing = await findD1(token, row.accountId, name);
     if (!existing) throw err;
     row.state.d1Id = existing;
+    row.state.d1Adopted = true;
   }
 }
 
@@ -134,21 +192,70 @@ async function recordMigrations(token: string, row: Installation, release: Relea
   );
 }
 
+async function pendingMigrationStatements(token: string, row: Installation, release: ReleaseManifest): Promise<string[]> {
+  const fromVersion = row.state.installedVersion ?? "0.0.0";
+  const files = migrationFiles(release).filter((file) => compareVersions(file.since, fromVersion) > 0);
+  if (!row.state.d1Id || files.length === 0) return [];
+  await d1Query(
+    token,
+    row.accountId,
+    row.state.d1Id,
+    "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
+  );
+  const appliedRows = await d1QueryRows<{ name: string }>(
+    token,
+    row.accountId,
+    row.state.d1Id,
+    "SELECT name FROM schema_migrations",
+  );
+  const applied = new Set(appliedRows.map((entry) => entry.name));
+  return files.filter((file) => !applied.has(file.name)).flatMap((file) => file.statements);
+}
+
 async function migrate(token: string, env: Env, row: Installation): Promise<boolean> {
   const release = await loadRelease(env);
-  const statements = flatMigrations(release);
+  const statements =
+    row.mode === "update" || row.mode === "repair"
+      ? await pendingMigrationStatements(token, row, release)
+      : flatMigrations(release);
   if (!row.state.d1Id) throw new Error("The database was not created.");
   const start = row.state.migrationIndex ?? 0;
   const end = Math.min(statements.length, start + 20);
   for (let i = start; i < end; i++) {
-    await d1Query(token, row.accountId, row.state.d1Id, statements[i]);
+    await d1Query(token, row.accountId, row.state.d1Id, statements[i]!);
     row.state.migrationIndex = i + 1;
   }
   row.message =
     statements.length === 0 ? null : `Migrations ${row.state.migrationIndex ?? 0} of ${statements.length}`;
   const done = (row.state.migrationIndex ?? 0) >= statements.length;
-  if (done) await recordMigrations(token, row, release);
+  if (done && row.mode === "fresh") await recordMigrations(token, row, release);
+  if (done && (row.mode === "update" || row.mode === "repair")) {
+    await recordPendingMigrationFiles(token, row, release);
+  }
   return done;
+}
+
+async function recordPendingMigrationFiles(token: string, row: Installation, release: ReleaseManifest): Promise<void> {
+  const fromVersion = row.state.installedVersion ?? "0.0.0";
+  const files = migrationFiles(release).filter((file) => compareVersions(file.since, fromVersion) > 0);
+  if (!row.state.d1Id || files.length === 0) return;
+  const appliedRows = await d1QueryRows<{ name: string }>(
+    token,
+    row.accountId,
+    row.state.d1Id,
+    "SELECT name FROM schema_migrations",
+  );
+  const applied = new Set(appliedRows.map((entry) => entry.name));
+  const pending = files.filter((file) => !applied.has(file.name));
+  if (!pending.length) return;
+  const now = new Date().toISOString();
+  const values = pending.map((file) => `('${file.name.replace(/'/g, "''")}', '${now}')`).join(", ");
+  await d1Query(
+    token,
+    row.accountId,
+    row.state.d1Id,
+    `INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES ${values}`,
+  );
 }
 
 async function ensureR2(token: string, row: Installation): Promise<void> {
@@ -156,8 +263,10 @@ async function ensureR2(token: string, row: Installation): Promise<void> {
   const name = bucketName(row.workerName);
   try {
     await createR2(token, row.accountId, name);
+    row.state.r2Created = true;
   } catch (err) {
     if (!(await findR2(token, row.accountId, name))) throw err;
+    row.state.r2Adopted = true;
   }
   row.state.r2Name = name;
 }
@@ -200,6 +309,7 @@ async function uploadAssets(token: string, env: Env, row: Installation): Promise
 }
 
 function scriptMetadata(env: Env, row: Installation, installerOrigin: string, release: ReleaseManifest, jwt: string) {
+  const diagnosticsUrl = env.DOTNOTE_DIAGNOSTICS_URL?.trim();
   return {
     main_module: "index.js",
     compatibility_date: release.compatibilityDate,
@@ -208,7 +318,13 @@ function scriptMetadata(env: Env, row: Installation, installerOrigin: string, re
       { type: "d1", name: "DB", id: row.state.d1Id },
       { type: "r2_bucket", name: "BUCKET", bucket_name: row.state.r2Name },
       { type: "assets", name: "ASSETS" },
-      { type: "plain_text", name: "HQ_URL", text: env.HQ_URL },
+      // ENABLED allows a registration after the owner consents. It is not consent.
+      ...(diagnosticsUrl
+        ? [
+            { type: "plain_text", name: "DOTNOTE_DIAGNOSTICS_URL", text: diagnosticsUrl },
+            { type: "plain_text", name: "DOTNOTE_DIAGNOSTICS_ENABLED", text: "true" },
+          ]
+        : []),
       { type: "plain_text", name: "WORKER_NAME", text: row.workerName },
       { type: "plain_text", name: "R2_BUCKET_NAME", text: row.state.r2Name },
       { type: "plain_text", name: "D1_DATABASE_NAME", text: dbName(row.workerName) },
@@ -227,38 +343,90 @@ function scriptMetadata(env: Env, row: Installation, installerOrigin: string, re
   };
 }
 
+const SECRET_BINDING_TYPES = new Set(["secret_text", "secret_key"]);
+
+function scriptMetadataUpdate(
+  settings: Awaited<ReturnType<typeof scriptSettings>>,
+  release: ReleaseManifest,
+  jwt: string,
+  runWorkerFirst: boolean,
+) {
+  const bindings: ScriptBinding[] = (settings.bindings ?? []).filter(
+    (binding) => !SECRET_BINDING_TYPES.has(binding.type) && binding.name !== "APP_VERSION",
+  );
+  if (!bindings.some((binding) => binding.type === "assets")) {
+    bindings.push({ type: "assets", name: "ASSETS" });
+  }
+  bindings.push({ type: "plain_text", name: "APP_VERSION", text: release.version });
+  return {
+    main_module: "index.js",
+    compatibility_date: release.compatibilityDate,
+    compatibility_flags: release.compatibilityFlags,
+    bindings,
+    keep_bindings: [...SECRET_BINDING_TYPES],
+    assets: {
+      jwt,
+      config: runWorkerFirst
+        ? { not_found_handling: "single-page-application", run_worker_first: true }
+        : { not_found_handling: "single-page-application" },
+    },
+  };
+}
+
 async function uploadWorker(token: string, env: Env, row: Installation, installerOrigin: string): Promise<void> {
   if (!row.state.d1Id || !row.state.r2Name || !row.state.completionJwt) {
     throw new Error("The database, bucket, or files are not ready.");
   }
   const release = await loadRelease(env);
   const source = await loadWorkerSource(env);
-  const metadata = scriptMetadata(env, row, installerOrigin, release, row.state.completionJwt);
+  const useUpdate = row.mode === "update" || row.mode === "repair";
+  const metadata = useUpdate
+    ? scriptMetadataUpdate(await scriptSettings(token, row.accountId, row.workerName), release, row.state.completionJwt, true)
+    : scriptMetadata(env, row, installerOrigin, release, row.state.completionJwt);
   try {
     await putScript(token, row.accountId, row.workerName, metadata, source);
   } catch (err) {
     const message = err instanceof Error ? err.message : "";
     if (!/run_worker_first|config/i.test(message)) throw err;
-    const fallback = scriptMetadata(env, row, installerOrigin, release, row.state.completionJwt);
-    fallback.assets.config = { not_found_handling: "single-page-application" } as typeof fallback.assets.config;
-    await putScript(token, row.accountId, row.workerName, fallback, source);
+    if (useUpdate) {
+      const fallback = scriptMetadataUpdate(
+        await scriptSettings(token, row.accountId, row.workerName),
+        release,
+        row.state.completionJwt,
+        false,
+      );
+      await putScript(token, row.accountId, row.workerName, fallback, source);
+    } else {
+      const fallback = scriptMetadata(env, row, installerOrigin, release, row.state.completionJwt);
+      fallback.assets.config = { not_found_handling: "single-page-application" } as typeof fallback.assets.config;
+      await putScript(token, row.accountId, row.workerName, fallback, source);
+    }
   }
   row.state.scriptUploaded = true;
 }
 
 async function storeSecrets(token: string, env: Env, row: Installation): Promise<void> {
+  if (row.mode === "update" || row.mode === "repair") {
+    await putSecret(token, row.accountId, row.workerName, "DOTNOTE_HANDOFF", row.handoffHash);
+    return;
+  }
   const grantKey = randomGrantKey();
   await putSecret(token, row.accountId, row.workerName, "CF_GRANT_KEY", grantKey);
   await putSecret(token, row.accountId, row.workerName, "DOTNOTE_HANDOFF", row.handoffHash);
-  const directoryToken = env.HQ_DIRECTORY_TOKEN?.trim();
-  if (directoryToken) {
-    await putSecret(token, row.accountId, row.workerName, "HQ_DIRECTORY_TOKEN", directoryToken);
+  const diagnosticsToken = env.DOTNOTE_DIAGNOSTICS_TOKEN?.trim();
+  if (diagnosticsToken) {
+    await putSecret(token, row.accountId, row.workerName, "DOTNOTE_DIAGNOSTICS_TOKEN", diagnosticsToken);
   }
 }
 
 async function turnOnAddress(token: string, row: Installation): Promise<void> {
   await enableSubdomain(token, row.accountId, row.workerName);
   if (row.hostname && row.zoneId && row.zoneName) {
+    const existing = await findWorkersDomain(token, row.accountId, row.hostname);
+    if (existing?.service === row.workerName) {
+      row.state.domainId = existing.id;
+      return;
+    }
     row.state.domainId = await attachDomain(
       token,
       row.accountId,
@@ -267,6 +435,7 @@ async function turnOnAddress(token: string, row: Installation): Promise<void> {
       row.zoneId,
       row.zoneName,
     );
+    row.state.domainCreated = true;
   }
 }
 
@@ -336,8 +505,21 @@ export async function advance(env: Env, token: string, row: Installation, instal
 }
 
 export async function removeInstallationResources(token: string, row: Installation): Promise<string | null> {
+  if (row.mode === "update" || row.mode === "repair") {
+    const leftovers: string[] = [];
+    if (row.state.domainCreated && row.state.domainId) {
+      try {
+        await deleteDomain(token, row.accountId, row.state.domainId);
+        row.state.domainId = undefined;
+      } catch (err) {
+        leftovers.push(err instanceof Error ? err.message : "domain");
+      }
+    }
+    return leftovers.length ? leftovers.join("; ") : null;
+  }
+
   const leftovers: string[] = [];
-  if (row.state.domainId) {
+  if (row.state.domainCreated && row.state.domainId) {
     try {
       await deleteDomain(token, row.accountId, row.state.domainId);
       row.state.domainId = undefined;
@@ -345,7 +527,7 @@ export async function removeInstallationResources(token: string, row: Installati
       leftovers.push(err instanceof Error ? err.message : "domain");
     }
   }
-  if (row.state.scriptUploaded) {
+  if (row.state.scriptUploaded && !row.state.workerAdopted) {
     try {
       await deleteScript(token, row.accountId, row.workerName);
       row.state.scriptUploaded = false;
@@ -353,7 +535,7 @@ export async function removeInstallationResources(token: string, row: Installati
       leftovers.push(err instanceof Error ? err.message : "worker");
     }
   }
-  if (row.state.d1Id) {
+  if (row.state.d1Id && row.state.d1Created) {
     try {
       await deleteD1(token, row.accountId, row.state.d1Id);
       row.state.d1Id = undefined;
@@ -361,7 +543,7 @@ export async function removeInstallationResources(token: string, row: Installati
       leftovers.push(err instanceof Error ? err.message : "database");
     }
   }
-  if (row.state.r2Name) {
+  if (row.state.r2Name && row.state.r2Created) {
     try {
       await deleteR2(token, row.accountId, row.state.r2Name);
       row.state.r2Name = undefined;

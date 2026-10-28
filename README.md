@@ -52,7 +52,9 @@ Notes on configuration (`app/wrangler.jsonc`):
 | `d1_databases[0].database_id` | Your `dotnote-index` D1 database ID |
 | `r2_buckets[0].bucket_name` | Your notes bucket (default `dotnote-data`) |
 | `vars.WORKER_NAME` | Name of your deployed Worker |
-| `vars.HQ_URL` | Sign-in/directory endpoint. Leave the default unless you were given another value; Dotnote works without directory reporting if no directory token is configured. |
+| `vars.DOTNOTE_DIAGNOSTICS_ENABLED` | `true` lets this deployment register with Dotnote Cloud after the owner opts in. `false` or omitted sends nothing. See [docs/diagnostics.md](./docs/diagnostics.md). |
+| `vars.DOTNOTE_DIAGNOSTICS_URL` | Where a registration is sent. Ignored unless diagnostics are enabled and the token secret is set. |
+| Secret `DOTNOTE_DIAGNOSTICS_TOKEN` | Bearer token for that endpoint. The guided installer sets it. A source deploy without this secret never registers. |
 | `vars.INSTALLER_ORIGIN` | Origin of the install site used for reconnect links |
 
 Running the **installer** yourself is optional and advanced: it needs its own D1 database and a Cloudflare OAuth client ID (`installer/wrangler.example.jsonc`). Most people should use the guided install at dotnote.cloud instead.

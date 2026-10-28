@@ -2,12 +2,16 @@ export type Env = {
   DB: D1Database;
   BUCKET: R2Bucket;
   ASSETS: Fetcher;
-  /** Same-account HQ worker (preferred in production). */
-  HQ?: Fetcher;
   DOTNOTE_DEV?: string;
-  HQ_URL: string;
-  /** Bearer token for the HQ directory. Wrangler secret. Absent means the directory is skipped. */
-  HQ_DIRECTORY_TOKEN?: string;
+  /**
+   * "true" or "1" lets this deployment register with Dotnote Cloud after the owner consents.
+   * Anything else, including unset, sends nothing.
+   */
+  DOTNOTE_DIAGNOSTICS_ENABLED?: string;
+  /** Registration endpoint. Ignored unless diagnostics are enabled and a token is set. */
+  DOTNOTE_DIAGNOSTICS_URL?: string;
+  /** Bearer token. Wrangler secret. Absent means reporting is skipped. */
+  DOTNOTE_DIAGNOSTICS_TOKEN?: string;
   CF_ACCOUNT_ID?: string;
   WORKER_NAME?: string;
   R2_BUCKET_NAME?: string;

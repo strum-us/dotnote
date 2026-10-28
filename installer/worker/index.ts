@@ -1,14 +1,6 @@
 import { Hono } from "hono";
-import {
-  findD1,
-  findR2,
-  getAccount,
-  hostnameConflict,
-  listAccounts,
-  listZones,
-  scriptExists,
-  workersSubdomain,
-} from "./cf-api";
+import { getAccount, listAccounts, listZones, workersSubdomain } from "./cf-api";
+import { assertInstallMode, classifyResources, type InstallMode } from "./resource-check";
 import { randomKey, safeEqual, sha256Hex } from "./crypto";
 import type { Env } from "./env";
 import {
@@ -154,24 +146,31 @@ async function checkNames(token: string, body: Record<string, unknown>): Promise
   const workerName = str(body.workerName);
   await getAccount(token, accountId);
   if (!validName(workerName)) {
-    return { worker: "invalid", database: "invalid", bucket: "invalid", hostname: null };
+    return {
+      worker: "invalid",
+      database: "invalid",
+      bucket: "invalid",
+      hostname: null,
+      suggestedMode: "blocked",
+      blockReason: "Use a short lowercase name.",
+      installedVersion: null,
+      d1Id: null,
+    };
   }
-  const worker = (await scriptExists(token, accountId, workerName)) ? "taken" : "free";
-  const database = (await findD1(token, accountId, `${workerName}-index`)) ? "taken" : "free";
-  const bucket = (await findR2(token, accountId, `${workerName}-data`)) ? "taken" : "free";
-  const hostname = str(body.hostname);
-  const zoneId = str(body.zoneId);
-  const zoneName = str(body.zoneName);
-  let host: { ok: boolean; detail?: string } | null = null;
-  if (hostname) {
-    if (!zoneId || !zoneName || !(hostname === zoneName || hostname.endsWith(`.${zoneName}`)) || hostname === zoneName) {
-      host = { ok: false, detail: "Choose a name on a domain this account already has." };
-    } else {
-      const detail = await hostnameConflict(token, zoneId, zoneName, hostname);
-      host = detail ? { ok: false, detail } : { ok: true };
-    }
-  }
-  return { worker, database, bucket, hostname: host };
+  return classifyResources(
+    token,
+    accountId,
+    workerName,
+    str(body.hostname),
+    str(body.zoneId),
+    str(body.zoneName),
+  );
+}
+
+function parseMode(value: unknown): InstallMode {
+  const mode = str(value);
+  if (mode === "update" || mode === "repair" || mode === "wipe") return mode;
+  return "fresh";
 }
 
 async function createInstallation(env: Env, token: string, body: Record<string, unknown>): Promise<Response> {
@@ -191,6 +190,22 @@ async function createInstallation(env: Env, token: string, body: Record<string, 
   if (!/^[a-f0-9]{64}$/.test(handoffHash)) {
     return Response.json({ error: { code: "bad_request", message: "The setup key was not accepted." } }, { status: 400 });
   }
+  const mode = parseMode(body.mode);
+  if (mode === "wipe") {
+    if (body.confirmWipe !== true) {
+      return Response.json(
+        { error: { code: "bad_request", message: "Confirm that you want to delete Dotnote data." } },
+        { status: 400 },
+      );
+    }
+    if (str(body.workerNameConfirm) !== workerName) {
+      return Response.json(
+        { error: { code: "bad_request", message: "Type the Worker name exactly to confirm data deletion." } },
+        { status: 400 },
+      );
+    }
+  }
+
   const account = await getAccount(token, accountId);
   const release = await loadRelease(env);
   let address: string;
@@ -218,6 +233,17 @@ async function createInstallation(env: Env, token: string, body: Record<string, 
     }
     address = `https://${workerName}.${subdomain}.workers.dev`;
   }
+
+  const check = await assertInstallMode(
+    token,
+    account.id,
+    workerName,
+    hostname ?? "",
+    zoneId ?? "",
+    zoneName ?? "",
+    mode,
+  );
+
   const now = new Date().toISOString();
   const key = randomKey();
   const row: Installation = {
@@ -232,10 +258,19 @@ async function createInstallation(env: Env, token: string, body: Record<string, 
     address,
     handoffHash,
     releaseVersion: release.version,
+    mode,
     stepIndex: 0,
     status: "running",
     message: null,
-    state: {},
+    state: {
+      installedVersion: check.installedVersion ?? undefined,
+      ...(mode === "update" || mode === "repair"
+        ? {
+            d1Id: check.d1Id ?? undefined,
+            ...(check.d1Id ? { d1Adopted: true } : {}),
+          }
+        : {}),
+    },
     createdAt: now,
     updatedAt: now,
   };
