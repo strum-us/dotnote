@@ -54,7 +54,7 @@ export async function cfEnvelope<T>(
   try {
     json = JSON.parse(text) as Envelope<T>;
   } catch {
-    throw new CfApiError(text.slice(0, 300) || `Cloudflare API ${res.status}`, res.status);
+    throw new CfApiError(`Cloudflare returned an unexpected response (${res.status}).`, res.status);
   }
   if (!json.success) {
     const first = json.errors?.[0];
@@ -101,14 +101,31 @@ export async function listZones(token: string, accountId: string): Promise<{ id:
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** GET script returns multipart source on success — never parse it as JSON. */
 export async function scriptExists(token: string, accountId: string, name: string): Promise<boolean> {
-  try {
-    await cf(token, "GET", `/accounts/${accountId}/workers/scripts/${name}`);
+  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${name}`, {
+    method: "GET",
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(CF_TIMEOUT_MS),
+  });
+  if (res.status === 404) return false;
+  if (res.ok) {
+    await res.body?.cancel();
     return true;
-  } catch (err) {
-    if (isMissing(err)) return false;
-    throw err;
   }
+  const text = await res.text().catch(() => "");
+  let message = `Cloudflare API ${res.status}`;
+  let code: number | undefined;
+  try {
+    const json = JSON.parse(text) as Envelope<unknown>;
+    message = json.errors?.[0]?.message ?? message;
+    code = json.errors?.[0]?.code;
+  } catch {
+    /* non-JSON error body */
+  }
+  const err = new CfApiError(message, res.status, code);
+  if (isMissing(err)) return false;
+  throw err;
 }
 
 export async function scriptSettings(token: string, accountId: string, scriptName: string): Promise<ScriptSettings> {

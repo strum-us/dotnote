@@ -3,7 +3,7 @@ import {
   findR2,
   findWorkersDomainService,
   hostnameConflict,
-  scriptExists,
+  isMissing,
   scriptSettings,
   type ScriptBinding,
 } from "./cf-api";
@@ -84,27 +84,21 @@ export async function classifyResources(
   const dbLabel = `${workerName}-index`;
   const bucketLabel = `${workerName}-data`;
 
-  const [workerPresent, d1Id, bucketPresent] = await Promise.all([
-    scriptExists(token, accountId, workerName),
+  const [settingsResult, d1Id, bucketPresent] = await Promise.all([
+    scriptSettings(token, accountId, workerName).catch((err) => (isMissing(err) ? null : Promise.reject(err))),
     findD1(token, accountId, dbLabel),
     findR2(token, accountId, bucketLabel),
   ]);
 
-  let bindings: ScriptBinding[] = [];
-  let installedVersion: string | null = null;
+  const workerPresent = settingsResult !== null;
+  let bindings: ScriptBinding[] = settingsResult?.bindings ?? [];
+  let installedVersion: string | null = workerPresent ? bindingText(bindings, "APP_VERSION") : null;
   let workerKind: ResourceKind = workerPresent ? "unknown" : "free";
 
-  if (workerPresent) {
-    try {
-      const settings = await scriptSettings(token, accountId, workerName);
-      bindings = settings.bindings ?? [];
-      installedVersion = bindingText(bindings, "APP_VERSION");
-      workerKind = workerLooksLikeDotnote(bindings, workerName, d1Id, bucketLabel)
-        ? "dotnote"
-        : classifyTaken("foreign");
-    } catch {
-      workerKind = "unknown";
-    }
+  if (workerPresent && settingsResult) {
+    workerKind = workerLooksLikeDotnote(bindings, workerName, d1Id, bucketLabel)
+      ? "dotnote"
+      : classifyTaken("foreign");
   }
 
   let databaseKind: ResourceKind = d1Id ? "unknown" : "free";
