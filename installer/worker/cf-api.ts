@@ -336,6 +336,31 @@ export async function putSecret(
   });
 }
 
+export async function listSecretNames(token: string, accountId: string, scriptName: string): Promise<string[]> {
+  const rows = await cf<{ name: string }[]>(token, "GET", `/accounts/${accountId}/workers/scripts/${scriptName}/secrets`);
+  return (rows ?? []).map((row) => row.name);
+}
+
+/** Cron expressions of the script's Cron Triggers. They live beside the script and survive uploads. */
+export async function scriptSchedules(token: string, accountId: string, scriptName: string): Promise<string[]> {
+  const result = await cf<{ schedules?: { cron: string }[] }>(
+    token,
+    "GET",
+    `/accounts/${accountId}/workers/scripts/${scriptName}/schedules`,
+  );
+  return (result?.schedules ?? []).map((entry) => entry.cron);
+}
+
+/** Replaces every Cron Trigger of the script. */
+export async function putSchedules(token: string, accountId: string, scriptName: string, crons: string[]): Promise<void> {
+  await cf(
+    token,
+    "PUT",
+    `/accounts/${accountId}/workers/scripts/${scriptName}/schedules`,
+    crons.map((cron) => ({ cron })),
+  );
+}
+
 export async function enableSubdomain(token: string, accountId: string, scriptName: string): Promise<void> {
   await cf(token, "POST", `/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`, {
     enabled: true,

@@ -166,6 +166,12 @@ export const cloudflareApi = {
       method: "POST",
     }),
   usage: () => request<R2UsageResponse>("/api/cloudflare/usage"),
+  saveToken: (payload: { token: string; accountId?: string; workerName?: string }) =>
+    request<{ ok: true; accountId: string; workerName: string }>("/api/cloudflare/token", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  removeToken: () => request<{ ok: true }>("/api/cloudflare/token", { method: "DELETE" }),
   copyBatch: (payload: {
     accountId: string;
     bucketName: string;
@@ -189,6 +195,8 @@ export const updateApi = {
   step: () => request<UpdateStatusResponse>("/api/update/step", { method: "POST" }),
   retry: () => request<UpdateStatusResponse>("/api/update/retry", { method: "POST" }),
   cancel: () => request<UpdateStatusResponse>("/api/update/cancel", { method: "POST" }),
+  setAuto: (enabled: boolean) =>
+    request<{ autoUpdate: boolean }>("/api/update/auto", { method: "POST", body: JSON.stringify({ enabled }) }),
 };
 
 export const llmApi = {

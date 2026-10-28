@@ -20,6 +20,12 @@ export type Env = {
   CF_OAUTH_CLIENT_ID?: string;
   /** AES-GCM key, standard base64 of 32 bytes. Set by the installer, never returned. */
   CF_GRANT_KEY?: string;
+  /**
+   * Cloudflare API token (Workers Scripts: Edit) for a Dotnote without an installer grant.
+   * Settings › Cloudflare stores it with the token itself; this Worker keeps no other copy.
+   * Wrangler users may set it with `wrangler secret put CF_API_TOKEN`.
+   */
+  CF_API_TOKEN?: string;
   /** sha256 hex of the one-time install code. Compared, never useful as a Cloudflare token. */
   DOTNOTE_HANDOFF?: string;
   /** Origin of the deploy page, used to send the user back to reconnect and to fetch releases. */

@@ -119,6 +119,14 @@ export async function saveInstallation(env: Env, row: Installation): Promise<voi
     .run();
 }
 
+/** Hand the installation to another browser: a new browser key and a new setup code. */
+export async function rekeyInstallation(env: Env, row: Installation): Promise<void> {
+  row.updatedAt = new Date().toISOString();
+  await env.DB.prepare("UPDATE installations SET key_hash = ?, handoff_hash = ?, updated_at = ? WHERE id = ?")
+    .bind(row.keyHash, row.handoffHash, row.updatedAt, row.id)
+    .run();
+}
+
 export async function getInstallation(env: Env, id: string): Promise<Installation | null> {
   const row = await env.DB.prepare(`${SELECT} WHERE id = ?`).bind(id).first<Row>();
   return row ? mapRow(row) : null;

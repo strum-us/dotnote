@@ -26,8 +26,9 @@ export const BLOCKED_COPY: Record<UpdateBlockedReason, string> = {
   development: "Updates are off in local development.",
   no_installer: "This Dotnote has no installer address, so it cannot fetch releases.",
   unconfigured:
-    "This Dotnote was not deployed by the installer, so it cannot redeploy itself. Update it the way it was deployed.",
-  not_connected: "Connect Cloudflare to let this Dotnote update itself.",
+    "This Dotnote was not deployed by the installer. Give it a Cloudflare API token in Settings › Cloudflare once, and it updates itself from then on.",
+  not_connected:
+    "Connect Cloudflare, or give this Dotnote an API token in Settings › Cloudflare, to let it update itself.",
   missing_scopes: "The stored Cloudflare permission cannot replace the Worker. Reconnect Cloudflare to allow updates.",
 };
 
@@ -64,6 +65,7 @@ class UpdateStore {
   checkError: string | null = null;
   busy = false;
   error: string | null = null;
+  autoBusy = false;
   /** Step requests kept failing while the job was running. */
   lostContact = false;
 
@@ -99,6 +101,11 @@ class UpdateStore {
 
   get latestVersion(): string | null {
     return this.check?.latestVersion ?? null;
+  }
+
+  /** The Worker installs releases on its own from a Cron Trigger (worker/update/schedule.ts). */
+  get autoUpdate(): boolean {
+    return this.check?.autoUpdate ?? false;
   }
 
   /** The Worker runs other code than this page. */
@@ -282,6 +289,24 @@ class UpdateStore {
       runInAction(() => {
         this.busy = false;
         this.error = apiMessage(err, "Could not dismiss the failed update.");
+      });
+    }
+  }
+
+  async setAutoUpdate(enabled: boolean): Promise<void> {
+    if (this.autoBusy) return;
+    this.autoBusy = true;
+    this.error = null;
+    try {
+      const res = await updateApi.setAuto(enabled);
+      runInAction(() => {
+        this.autoBusy = false;
+        if (this.check) this.check = { ...this.check, autoUpdate: res.autoUpdate };
+      });
+    } catch (err) {
+      runInAction(() => {
+        this.autoBusy = false;
+        this.error = apiMessage(err, "Could not change automatic updates.");
       });
     }
   }

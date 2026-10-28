@@ -1,7 +1,7 @@
 /**
  * The part of installer/worker/cf-api.ts a Dotnote needs to redeploy itself.
  * There is no shared package between app and installer: when the installer's
- * upload calls change (asset sessions, script upload, secrets), change them here too.
+ * upload calls change (asset sessions, script upload, secrets, schedules), change them here too.
  */
 
 export class CfApiError extends Error {
@@ -133,4 +133,37 @@ export async function putSecret(
     text,
     type: "secret_text",
   });
+}
+
+export async function deleteSecret(token: string, accountId: string, scriptName: string, name: string): Promise<void> {
+  await cf(
+    token,
+    "DELETE",
+    `/accounts/${accountId}/workers/scripts/${scriptName}/secrets/${encodeURIComponent(name)}`,
+  );
+}
+
+/** Accounts this token can open. */
+export async function listAccounts(token: string): Promise<{ id: string; name: string }[]> {
+  return (await cf<{ id: string; name: string }[]>(token, "GET", "/accounts?per_page=50")) ?? [];
+}
+
+/** Cron expressions of the script's Cron Triggers. They live beside the script and survive uploads. */
+export async function scriptSchedules(token: string, accountId: string, scriptName: string): Promise<string[]> {
+  const result = await cf<{ schedules?: { cron: string }[] }>(
+    token,
+    "GET",
+    `/accounts/${accountId}/workers/scripts/${scriptName}/schedules`,
+  );
+  return (result?.schedules ?? []).map((entry) => entry.cron);
+}
+
+/** Replaces every Cron Trigger of the script. */
+export async function putSchedules(token: string, accountId: string, scriptName: string, crons: string[]): Promise<void> {
+  await cf(
+    token,
+    "PUT",
+    `/accounts/${accountId}/workers/scripts/${scriptName}/schedules`,
+    crons.map((cron) => ({ cron })),
+  );
 }

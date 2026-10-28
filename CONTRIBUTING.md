@@ -27,7 +27,9 @@ See the "Local development" section of [README.md](./README.md) for ports and th
   - Make every statement safe to run twice (`IF NOT EXISTS`, `INSERT OR IGNORE`). Wrangler-deployed instances may apply a file the updater already ran.
 - Run the checks that apply to your change:
   - App: `pnpm --filter dotnote-app run build`
+  - App tests: `cd app && node --experimental-strip-types --test test/*.test.ts`
   - Installer: `pnpm --filter dotnote-installer run typecheck`
+- Releases are signed (see `docs/self-update.md`). To pack one yourself, create a key with `pnpm release:key` first.
 - Describe what changed and how you tested it.
 
 ## Reporting bugs

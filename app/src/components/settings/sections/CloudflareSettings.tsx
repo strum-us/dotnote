@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { SettingsField, SettingsSectionShell } from "@/components/settings/SettingsSectionShell";
+import { ApiTokenCard } from "@/components/settings/sections/ApiTokenCard";
 import { CloudflareMigrationDialog } from "@/components/settings/sections/CloudflareMigrationDialog";
 import { UpdatesLinkCard } from "@/components/settings/sections/UpdatesLinkCard";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatBytes } from "@/lib/format-bytes";
 import { cloudflareStore } from "@/stores/cloudflare-store";
+import { updateStore } from "@/stores/update-store";
 import type { R2UsageCategory } from "@shared/types";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +36,7 @@ export const CloudflareSettings = observer(function CloudflareSettings() {
 
   useEffect(() => {
     cloudflareStore.ensureLoaded();
+    if (!updateStore.check) void updateStore.refresh();
   }, []);
 
   const status = cloudflareStore.status;
@@ -103,6 +106,8 @@ export const CloudflareSettings = observer(function CloudflareSettings() {
             </div>
           </CardContent>
         </Card>
+
+        <ApiTokenCard />
 
         <UpdatesLinkCard />
 

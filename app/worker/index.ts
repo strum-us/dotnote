@@ -64,6 +64,7 @@ import { cloudflareRoutes } from "./cloudflare";
 import { installRoutes } from "./install-routes";
 import { entrySampleRoutes } from "./entry-sample";
 import { llmRoutes } from "./llm";
+import { runScheduledUpdate } from "./update/schedule";
 import { updateRoutes } from "./update/update-routes";
 import {
   createOrGetShare,
@@ -750,4 +751,15 @@ app.all("*", async (c) => {
   return c.env.ASSETS.fetch(c.req.raw);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  /** The update Cron Trigger (update/cron.ts). */
+  scheduled(_controller, env, ctx) {
+    ctx.waitUntil(
+      runScheduledUpdate(env).catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(JSON.stringify({ event: "scheduled_update_failed", error: message }));
+      }),
+    );
+  },
+} satisfies ExportedHandler<Env>;

@@ -11,6 +11,7 @@
     "build": "pnpm --filter dotnote-app build",
     "deploy:app": "pnpm --filter dotnote-app run deploy",
     "pack:release": "node scripts/pack-release.mjs",
+    "release:key": "node scripts/release-key.mjs",
     "deploy:installer": "node scripts/pack-release.mjs && pnpm --filter dotnote-installer run deploy",
     "dev:installer": "pnpm --filter dotnote-installer dev"
   }

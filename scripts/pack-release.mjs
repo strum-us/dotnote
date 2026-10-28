@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, sign } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +12,8 @@ const releaseDir = path.join(root, "installer", "public", "release");
 const archiveDir = path.join(releaseDir, "archive");
 const bundleDir = path.join(root, "installer", ".wrangler", "pack");
 const notesDir = path.join(root, "release-notes");
+const keysFile = path.join(appDir, "worker", "update", "release-keys.json");
+const defaultKeyFile = path.join(os.homedir(), ".dotnote", "release-signing-key.pem");
 
 /** Releases kept under release/archive/ for rollback and pinned downloads. */
 const KEEP_ARCHIVES = 10;
@@ -93,7 +96,39 @@ function migrationSince(name, sql) {
   return match[1];
 }
 
-/** Front matter keys: `date`, and `rollout` (percent of instances offered the release). */
+/**
+ * Releases are signed so a Dotnote can update itself with no one watching:
+ * it trusts a manifest only when a key in app/worker/update/release-keys.json
+ * signed it. The private key comes from DOTNOTE_RELEASE_SIGNING_KEY (PEM), or
+ * the file DOTNOTE_RELEASE_SIGNING_KEY_FILE, or ~/.dotnote/release-signing-key.pem.
+ */
+async function loadSigningKey() {
+  const file = process.env.DOTNOTE_RELEASE_SIGNING_KEY_FILE || defaultKeyFile;
+  const pem = process.env.DOTNOTE_RELEASE_SIGNING_KEY?.trim() || (existsSync(file) ? await readFile(file, "utf8") : "");
+  if (!pem) fail(`No release signing key at ${file}. Create one with: node scripts/release-key.mjs`);
+  const privateKey = createPrivateKey(pem);
+  if (privateKey.asymmetricKeyType !== "ed25519") fail("The release signing key must be an Ed25519 key.");
+  const raw = createPublicKey(privateKey).export({ format: "der", type: "spki" }).subarray(-32);
+  const publicKey = raw.toString("base64");
+  const listed = JSON.parse(await readFile(keysFile, "utf8")).keys.find((key) => key.publicKey === publicKey);
+  if (!listed) {
+    fail(
+      `The signing key ${publicKey} is not in app/worker/update/release-keys.json, so Dotnotes would refuse this release. ` +
+        "Run node scripts/release-key.mjs to add it.",
+    );
+  }
+  return { privateKey, id: listed.id };
+}
+
+/** `manifest.json.sig`: a detached signature over the exact bytes of `manifest.json`. */
+function signatureFile(key, bytes) {
+  return JSON.stringify({ keyId: key.id, signature: sign(null, bytes, key.privateKey).toString("base64") });
+}
+
+/**
+ * Front matter keys: `date`, `rollout` (percent of instances offered the
+ * release), and `auto` (`false` keeps automatic updates from starting it).
+ */
 function parseNotes(text) {
   const match = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text);
   const meta = {};
@@ -133,6 +168,7 @@ async function readArchivedManifests() {
   return out.sort((a, b) => compareVersions(b.version, a.version));
 }
 
+const signingKey = await loadSigningKey();
 const pkg = JSON.parse(await readFile(path.join(appDir, "package.json"), "utf8"));
 const wrangler = readJsonc(await readFile(path.join(appDir, "wrangler.jsonc"), "utf8"));
 if (!parseVersion(pkg.version)) fail(`app/package.json has an invalid version: ${pkg.version}`);
@@ -157,6 +193,7 @@ const notesFile = path.join(notesDir, `${pkg.version}.md`);
 let notes = null;
 let releasedAt = new Date().toISOString();
 let rolloutPercent = 100;
+let autoUpdate = true;
 if (existsSync(notesFile)) {
   const parsed = parseNotes(await readFile(notesFile, "utf8"));
   notes = parsed.body || null;
@@ -167,6 +204,11 @@ if (existsSync(notesFile)) {
     const value = Number(parsed.meta.rollout.replace(/%$/, ""));
     if (!Number.isFinite(value) || value < 0 || value > 100) fail(`Invalid rollout in ${notesFile}: ${parsed.meta.rollout}`);
     rolloutPercent = Math.round(value);
+  }
+  if (parsed.meta.auto !== undefined) {
+    const value = parsed.meta.auto.toLowerCase();
+    if (!["true", "false", "yes", "no"].includes(value)) fail(`Invalid auto in ${notesFile}: ${parsed.meta.auto}`);
+    autoUpdate = value === "true" || value === "yes";
   }
 } else {
   console.warn(`No release notes at release-notes/${pkg.version}.md; the update dialog will show none.`);
@@ -221,6 +263,7 @@ const manifest = {
   releasedAt,
   notes,
   rolloutPercent,
+  autoUpdate,
   license: "SUL-1.0",
   compatibilityDate: wrangler.compatibility_date,
   compatibilityFlags: wrangler.compatibility_flags ?? [],
@@ -244,8 +287,12 @@ await writeFile(path.join(releaseDir, "LICENSE.md"), await readFile(path.join(ro
 for (const [hash, bytes] of byHash) {
   await writeFile(path.join(releaseDir, "files", hash), bytes);
 }
-await writeFile(path.join(versionDir, "manifest.json"), JSON.stringify(manifest));
-await writeFile(path.join(releaseDir, "manifest.json"), JSON.stringify(manifest));
+const manifestBytes = Buffer.from(JSON.stringify(manifest));
+const manifestSignature = signatureFile(signingKey, manifestBytes);
+for (const dir of [versionDir, releaseDir]) {
+  await writeFile(path.join(dir, "manifest.json"), manifestBytes);
+  await writeFile(path.join(dir, "manifest.json.sig"), manifestSignature);
+}
 
 // Trim old archives, then drop asset files that no kept release refers to.
 const archived = await readArchivedManifests();
@@ -253,6 +300,11 @@ for (const old of archived.slice(KEEP_ARCHIVES)) {
   await rm(path.join(archiveDir, old.version), { recursive: true, force: true });
 }
 const kept = archived.slice(0, KEEP_ARCHIVES);
+// Archives packed before releases were signed, or under an older key, are signed now so going back to them still works.
+for (const release of kept) {
+  const file = path.join(archiveDir, release.version, "manifest.json");
+  await writeFile(`${file}.sig`, signatureFile(signingKey, await readFile(file)));
+}
 const referenced = new Set(kept.flatMap((release) => (release.assets ?? []).map((file) => file.hash)));
 let pruned = 0;
 for (const name of await readdir(path.join(releaseDir, "files"))) {
@@ -274,6 +326,7 @@ await writeFile(
 
 console.log(
   `Packed Dotnote ${pkg.version}: ${assets.length} files, worker ${workerFile}, ${sizeBytes} bytes, ` +
-    `${migrations.length} migrations, rollout ${rolloutPercent}%, ${kept.length} archived` +
+    `${migrations.length} migrations, rollout ${rolloutPercent}%${autoUpdate ? "" : ", manual only"}, ` +
+    `${kept.length} archived, signed with key ${signingKey.id}` +
     (pruned ? `, pruned ${pruned} unused files` : ""),
 );

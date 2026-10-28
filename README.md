@@ -123,7 +123,8 @@ Requests go from **your Worker** directly to the provider you chose, using your 
 
 ## Updating
 
-- **Guided install:** when a new version is out, the sidebar offers it. Dotnote applies the new database migrations and replaces its own Worker using the Cloudflare permission it stored at install, then the page reloads. **Settings › Cloudflare** shows the running version, checks on demand, and can go back to the version you updated from. See [docs/self-update.md](./docs/self-update.md).
+- **Guided install:** when a new version is out, the sidebar offers it. Dotnote applies the new database migrations and replaces its own Worker using the Cloudflare permission it stored at install, then the page reloads. You never sign in to Cloudflare again for an update. **Settings › Updates** shows the running version, checks on demand, can go back to the version you updated from, and can install new releases on its own every 30 minutes, even with no tab open (off by default). Releases are signed, and Dotnote refuses one that is not. See [docs/self-update.md](./docs/self-update.md).
+- **Deployed with wrangler:** give Dotnote a Cloudflare API token with **Account › Workers Scripts › Edit** once in **Settings › Cloudflare**. It stores the token on its own Worker as a secret and updates itself like a guided install from then on. Or keep updating from source as below.
 - **From source:** pull the new source, then re-run the deploy:
 
 ```bash

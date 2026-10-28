@@ -1,15 +1,12 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import type {
-  UpdateBlockedReason,
-  UpdateCheckResponse,
-  UpdateStatusResponse,
-} from "@shared/types";
+import type { UpdateCheckResponse, UpdateStatusResponse } from "@shared/types";
 import { compareVersions, isVersion } from "@shared/version";
-import { readConnection, type CloudflareConnection } from "../cf-grant";
 import type { Env } from "../env";
 import type { AppVariables } from "../session";
+import { cloudflareToken, readUpdateAccess } from "./access";
+import { ensureUpdateSchedule } from "./cron";
 import {
   advanceJob,
   cancelJob,
@@ -21,18 +18,11 @@ import {
   runningJob,
   type UpdateJob,
 } from "./jobs";
-import {
-  installerOrigin,
-  latestRelease,
-  releaseManifest,
-  rolloutBucket,
-  type ReleaseManifest,
-} from "./release-client";
+import { blockedReason, rolloutHeld } from "./policy";
+import { latestRelease, releaseManifest, type ReleaseManifest } from "./release-client";
+import { autoUpdateEnabled, setAutoUpdate } from "./schedule";
 import { ensureUpdateTables } from "./schema";
 import { BUILD_VERSION } from "./version";
-
-/** Enough to read the script's settings, upload files, and replace the script. */
-const REQUIRED_SCOPES = ["workers-scripts.read", "workers-scripts.write"];
 
 export const updateRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -40,22 +30,6 @@ updateRoutes.use("*", async (c, next) => {
   await ensureUpdateTables(c.env);
   await next();
 });
-
-function blockedReason(env: Env, connection: CloudflareConnection): UpdateBlockedReason | null {
-  if (env.DOTNOTE_DEV === "1") return "development";
-  if (!installerOrigin(env)) return "no_installer";
-  if (!env.WORKER_NAME?.trim() || !env.CF_OAUTH_CLIENT_ID || !env.CF_GRANT_KEY) return "unconfigured";
-  if (!connection.connected) return "not_connected";
-  if (!REQUIRED_SCOPES.every((scope) => connection.scopes.includes(scope))) return "missing_scopes";
-  return null;
-}
-
-/** Outside a staged rollout until its percentage reaches this instance's bucket. */
-function rolloutHeld(env: Env, connection: CloudflareConnection, release: ReleaseManifest, host: string): boolean {
-  if (release.rolloutPercent >= 100) return false;
-  const key = `${connection.accountId ?? env.CF_ACCOUNT_ID ?? ""}:${env.WORKER_NAME?.trim() || host}`;
-  return rolloutBucket(key) >= release.rolloutPercent;
-}
 
 async function rollbackTarget(env: Env): Promise<string | null> {
   const from = await lastUpdateFrom(env, BUILD_VERSION);
@@ -71,8 +45,8 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 updateRoutes.get("/check", async (c) => {
-  const connection = await readConnection(c.env);
-  const blocked = blockedReason(c.env, connection);
+  const access = await readUpdateAccess(c.env);
+  const blocked = blockedReason(c.env, access);
   const job = await latestJob(c.env);
   let release: ReleaseManifest | null = null;
   let error: string | null = null;
@@ -84,7 +58,7 @@ updateRoutes.get("/check", async (c) => {
     }
   }
   const newer = !!release && compareVersions(release.version, BUILD_VERSION) > 0;
-  const held = newer && rolloutHeld(c.env, connection, release!, new URL(c.req.url).host);
+  const held = newer && rolloutHeld(c.env, access, release!, new URL(c.req.url).host);
   const offered = newer && !held;
   const body: UpdateCheckResponse = {
     checkedAt: new Date().toISOString(),
@@ -100,6 +74,8 @@ updateRoutes.get("/check", async (c) => {
     rollbackVersion: blocked === null ? await rollbackTarget(c.env) : null,
     error,
     job: job ? jobView(job) : null,
+    credential: access.credential,
+    autoUpdate: await autoUpdateEnabled(c.env),
   };
   return c.json(body);
 });
@@ -111,8 +87,8 @@ updateRoutes.get("/status", async (c) => {
 const versionBody = z.object({ version: z.string().min(1).max(64) });
 
 updateRoutes.post("/start", zValidator("json", versionBody), async (c) => {
-  const connection = await readConnection(c.env);
-  const blocked = blockedReason(c.env, connection);
+  const access = await readUpdateAccess(c.env);
+  const blocked = blockedReason(c.env, access);
   if (blocked) return c.json({ error: blocked }, 403);
   const { version } = c.req.valid("json");
   if (!isVersion(version) || compareVersions(version, BUILD_VERSION) <= 0) {
@@ -127,7 +103,7 @@ updateRoutes.post("/start", zValidator("json", versionBody), async (c) => {
   if (release.version !== version) {
     return c.json({ error: "release_changed", latestVersion: release.version }, 409);
   }
-  if (rolloutHeld(c.env, connection, release, new URL(c.req.url).host)) {
+  if (rolloutHeld(c.env, access, release, new URL(c.req.url).host)) {
     return c.json({ error: "rollout_held" }, 409);
   }
   const job = await createJob(c.env, "update", BUILD_VERSION, version);
@@ -136,7 +112,7 @@ updateRoutes.post("/start", zValidator("json", versionBody), async (c) => {
 });
 
 updateRoutes.post("/rollback", zValidator("json", versionBody), async (c) => {
-  const blocked = blockedReason(c.env, await readConnection(c.env));
+  const blocked = blockedReason(c.env, await readUpdateAccess(c.env));
   if (blocked) return c.json({ error: blocked }, 403);
   const { version } = c.req.valid("json");
   if ((await rollbackTarget(c.env)) !== version) return c.json({ error: "no_rollback" }, 409);
@@ -159,7 +135,7 @@ updateRoutes.post("/step", async (c) => {
 });
 
 updateRoutes.post("/retry", async (c) => {
-  const blocked = blockedReason(c.env, await readConnection(c.env));
+  const blocked = blockedReason(c.env, await readUpdateAccess(c.env));
   if (blocked) return c.json({ error: blocked }, 403);
   const latest = await latestJob(c.env);
   if (!latest || latest.status !== "failed") return c.json({ error: "nothing_to_retry" }, 409);
@@ -172,4 +148,26 @@ updateRoutes.post("/cancel", async (c) => {
   const latest = await latestJob(c.env);
   if (!latest || latest.status !== "failed") return c.json({ error: "nothing_to_cancel" }, 409);
   return c.json(statusBody(await cancelJob(c.env, latest)));
+});
+
+/**
+ * Automatic updates (schedule.ts). Turning them on needs a working credential
+ * and puts the Cron Trigger on the Worker, so the setting cannot be on while
+ * nothing would ever run it.
+ */
+updateRoutes.post("/auto", zValidator("json", z.object({ enabled: z.boolean() })), async (c) => {
+  const { enabled } = c.req.valid("json");
+  if (enabled) {
+    const blocked = blockedReason(c.env, await readUpdateAccess(c.env));
+    if (blocked) return c.json({ error: blocked }, 403);
+    try {
+      const { token, accountId, scriptName } = await cloudflareToken(c.env);
+      await ensureUpdateSchedule(token, accountId, scriptName);
+    } catch (err) {
+      const message = errorMessage(err, "Cloudflare did not accept the Cron Trigger.");
+      return c.json({ error: "schedule_failed", message }, 502);
+    }
+  }
+  await setAutoUpdate(c.env, enabled);
+  return c.json({ autoUpdate: enabled });
 });

@@ -1,6 +1,6 @@
 import type { UpdateJobView, UpdateStepId } from "@shared/types";
-import { mintAccessToken, readConnection } from "../cf-grant";
 import type { Env } from "../env";
+import { cloudflareToken, readUpdateAccess } from "./access";
 import {
   CfApiError,
   listSecretNames,
@@ -12,6 +12,7 @@ import {
   type ScriptBinding,
   type ScriptSettings,
 } from "./cf-deploy";
+import { ensureUpdateSchedule } from "./cron";
 import { assetBytes, releaseManifest, workerSource, type ReleaseManifest } from "./release-client";
 import { appliedMigrations, applyMigration, pendingMigrations, setMeta } from "./schema";
 import { BUILD_VERSION } from "./version";
@@ -19,9 +20,9 @@ import { BUILD_VERSION } from "./version";
 /**
  * The installer's steps minus everything that creates resources: no account
  * check, no new D1 or R2, no new secrets, no address. The browser drives the
- * job one step per request (like the installer), so no single request runs
- * into the subrequest or wall-clock limits, and every step is saved before
- * the next one starts. `deploy` replaces this very Worker; `verify` only
+ * job one step per request (like the installer), or the cron run does when no
+ * tab is open (schedule.ts), so no single request runs into the subrequest or
+ * wall-clock limits, and every step is saved before the next one starts. `deploy` replaces this very Worker; `verify` only
  * passes once a request is answered by the new code.
  */
 export const STEPS: { id: UpdateStepId; label: string }[] = [
@@ -44,12 +45,13 @@ const MAX_INTERRUPTED = 3;
 const MIGRATIONS_PER_STEP = 5;
 
 /**
- * Installer-written secrets. `keep_bindings` carries them across the upload;
- * if one is missing afterwards it is put back from this isolate's env, which
- * still holds the values. CF_GRANT_KEY is never regenerated: a new key could
- * not decrypt the stored Cloudflare grant.
+ * Installer-written secrets, and the API token an owner may store instead of
+ * a grant. `keep_bindings` carries them across the upload; if one is missing
+ * afterwards it is put back from this isolate's env, which still holds the
+ * values. CF_GRANT_KEY is never regenerated: a new key could not decrypt the
+ * stored Cloudflare grant.
  */
-const KEPT_SECRETS = ["CF_GRANT_KEY", "DOTNOTE_HANDOFF", "DOTNOTE_DIAGNOSTICS_TOKEN"] as const;
+const KEPT_SECRETS = ["CF_GRANT_KEY", "DOTNOTE_HANDOFF", "DOTNOTE_DIAGNOSTICS_TOKEN", "CF_API_TOKEN"] as const;
 const SECRET_TYPES = new Set(["secret_text", "secret_key"]);
 /** Bindings that point at extra module parts. The upload only sends index.js, so these cannot be carried. */
 const PART_BINDING_TYPES = new Set(["wasm_module", "text_blob", "data_blob"]);
@@ -151,6 +153,22 @@ export async function lastUpdateFrom(env: Env, version: string): Promise<string 
   return row?.fromVersion ?? null;
 }
 
+/**
+ * An update to this version failed or was set aside, or this Dotnote went back
+ * from it. Automatic updates leave such a release to the owner.
+ */
+export async function triedBefore(env: Env, version: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 as hit FROM update_jobs
+     WHERE (kind = 'update' AND to_version = ?1 AND status IN ('failed', 'cancelled'))
+        OR (kind = 'rollback' AND from_version = ?1 AND status = 'done')
+     LIMIT 1`,
+  )
+    .bind(version)
+    .first<{ hit: number }>();
+  return !!row;
+}
+
 /** A new job, unless one is already running. The check and the insert are one statement. */
 export async function createJob(
   env: Env,
@@ -222,11 +240,8 @@ function classify(err: unknown): { message: string; code: ErrorCode } {
 }
 
 async function cloudflare(env: Env): Promise<{ token: string; accountId: string; scriptName: string }> {
-  const scriptName = env.WORKER_NAME?.trim();
-  if (!scriptName) throw new StepError("This Dotnote does not know its Worker name.");
   try {
-    const minted = await mintAccessToken(env);
-    return { token: minted.accessToken, accountId: minted.accountId, scriptName };
+    return await cloudflareToken(env);
   } catch (err) {
     const message = err instanceof Error ? err.message : "";
     if (/already being renewed/i.test(message)) throw new StepWait(3000, "Waiting for Cloudflare access");
@@ -319,7 +334,7 @@ async function uploadBucket(env: Env, job: UpdateJob): Promise<StepResult> {
   }
   if (!job.state.uploadJwt) throw new StepError("The file upload was not started.");
   const release = await releaseManifest(env, job.toVersion);
-  const { accountId } = await readConnection(env);
+  const { accountId } = await readUpdateAccess(env);
   if (!accountId) throw new StepError("This Dotnote has no Cloudflare permission.", "permission");
   const parts = [];
   for (const hash of buckets[index]!) {
@@ -407,6 +422,10 @@ async function deploy(env: Env, job: UpdateJob): Promise<StepResult> {
   // From here on, new requests may already reach the new code. This request
   // still runs the old one, with the secrets in its env.
   await keepSecrets(env, token, accountId, scriptName);
+  // Workers installed before automatic updates have no Cron Trigger yet. Without one the update still works.
+  await ensureUpdateSchedule(token, accountId, scriptName).catch((err: unknown) =>
+    console.error(JSON.stringify({ event: "update_schedule_failed", error: err instanceof Error ? err.message : String(err) })),
+  );
   job.state.deployedAt = iso();
   job.message = `Waiting for Dotnote ${job.toVersion} to answer`;
   return { done: true };

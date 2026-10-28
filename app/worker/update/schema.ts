@@ -70,6 +70,20 @@ export async function applyMigration(env: Env, file: ReleaseMigration): Promise<
   await env.DB.batch(statements);
 }
 
+/** Null when the key or the table is missing (a request may run before the updater created it). */
+export async function getMeta(env: Env, key: string): Promise<string | null> {
+  try {
+    const row = await env.DB.prepare("SELECT value FROM app_meta WHERE key = ?").bind(key).first<{ value: string }>();
+    return row?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteMeta(env: Env, key: string): Promise<void> {
+  await env.DB.prepare("DELETE FROM app_meta WHERE key = ?").bind(key).run();
+}
+
 export async function setMeta(env: Env, key: string, value: string): Promise<void> {
   await env.DB.prepare(
     "INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",

@@ -13,10 +13,13 @@ import {
   findR2,
   findWorkersDomain,
   hostnameConflict,
+  listSecretNames,
   purgeR2Bucket,
+  putSchedules,
   putScript,
   putSecret,
   scriptExists,
+  scriptSchedules,
   scriptSettings,
   startAssetSession,
   uploadAssetBucket,
@@ -47,6 +50,13 @@ export const STEPS = [
   { id: "address", label: "Turn on the address" },
   { id: "prove", label: "Wait until Dotnote answers", waitMs: 3000 },
 ] as const;
+
+/**
+ * The Cron Trigger a Dotnote uses to update itself while no tab is open
+ * (app/worker/update/schedule.ts uses the same expression). It does nothing
+ * until the owner turns automatic updates on.
+ */
+const UPDATE_CRON = "*/30 * * * *";
 
 export type StepView = {
   status: "running" | "failed" | "ready" | "removed";
@@ -345,17 +355,34 @@ function scriptMetadata(env: Env, row: Installation, installerOrigin: string, re
 
 const SECRET_BINDING_TYPES = new Set(["secret_text", "secret_key"]);
 
+/**
+ * What a Dotnote needs to update itself. A Worker deployed with wrangler may
+ * lack some of them; update and repair add the missing ones and keep the rest.
+ */
+function selfUpdateVars(env: Env, row: Installation, installerOrigin: string): ScriptBinding[] {
+  return [
+    { type: "plain_text", name: "WORKER_NAME", text: row.workerName },
+    { type: "plain_text", name: "CF_ACCOUNT_ID", text: row.accountId },
+    { type: "plain_text", name: "CF_OAUTH_CLIENT_ID", text: env.OAUTH_CLIENT_ID },
+    { type: "plain_text", name: "INSTALLER_ORIGIN", text: installerOrigin },
+  ];
+}
+
 function scriptMetadataUpdate(
   settings: Awaited<ReturnType<typeof scriptSettings>>,
   release: ReleaseManifest,
   jwt: string,
   runWorkerFirst: boolean,
+  missingVars: ScriptBinding[],
 ) {
   const bindings: ScriptBinding[] = (settings.bindings ?? []).filter(
     (binding) => !SECRET_BINDING_TYPES.has(binding.type) && binding.name !== "APP_VERSION",
   );
   if (!bindings.some((binding) => binding.type === "assets")) {
     bindings.push({ type: "assets", name: "ASSETS" });
+  }
+  for (const binding of missingVars) {
+    if (!bindings.some((existing) => existing.name === binding.name)) bindings.push(binding);
   }
   bindings.push({ type: "plain_text", name: "APP_VERSION", text: release.version });
   return {
@@ -380,8 +407,15 @@ async function uploadWorker(token: string, env: Env, row: Installation, installe
   const release = await loadRelease(env);
   const source = await loadWorkerSource(env);
   const useUpdate = row.mode === "update" || row.mode === "repair";
+  const vars = selfUpdateVars(env, row, installerOrigin);
   const metadata = useUpdate
-    ? scriptMetadataUpdate(await scriptSettings(token, row.accountId, row.workerName), release, row.state.completionJwt, true)
+    ? scriptMetadataUpdate(
+        await scriptSettings(token, row.accountId, row.workerName),
+        release,
+        row.state.completionJwt,
+        true,
+        vars,
+      )
     : scriptMetadata(env, row, installerOrigin, release, row.state.completionJwt);
   try {
     await putScript(token, row.accountId, row.workerName, metadata, source);
@@ -394,6 +428,7 @@ async function uploadWorker(token: string, env: Env, row: Installation, installe
         release,
         row.state.completionJwt,
         false,
+        vars,
       );
       await putScript(token, row.accountId, row.workerName, fallback, source);
     } else {
@@ -403,10 +438,30 @@ async function uploadWorker(token: string, env: Env, row: Installation, installe
     }
   }
   row.state.scriptUploaded = true;
+  await ensureUpdateSchedule(token, row);
+}
+
+/** Keeps the script's other Cron Triggers. A failure here only delays automatic updates. */
+async function ensureUpdateSchedule(token: string, row: Installation): Promise<void> {
+  try {
+    const crons = row.state.workerAdopted ? await scriptSchedules(token, row.accountId, row.workerName) : [];
+    if (crons.includes(UPDATE_CRON)) return;
+    await putSchedules(token, row.accountId, row.workerName, [...crons, UPDATE_CRON]);
+  } catch (err) {
+    console.error(
+      JSON.stringify({ event: "install_schedule_failed", error: err instanceof Error ? err.message : String(err) }),
+    );
+  }
 }
 
 async function storeSecrets(token: string, env: Env, row: Installation): Promise<void> {
   if (row.mode === "update" || row.mode === "repair") {
+    // A new CF_GRANT_KEY could not decrypt a grant stored under the old one, so
+    // only a Worker that never had one gets a key (a wrangler deploy, say).
+    const present = new Set(await listSecretNames(token, row.accountId, row.workerName));
+    if (!present.has("CF_GRANT_KEY")) {
+      await putSecret(token, row.accountId, row.workerName, "CF_GRANT_KEY", randomGrantKey());
+    }
     await putSecret(token, row.accountId, row.workerName, "DOTNOTE_HANDOFF", row.handoffHash);
     return;
   }
@@ -416,6 +471,18 @@ async function storeSecrets(token: string, env: Env, row: Installation): Promise
   const diagnosticsToken = env.DOTNOTE_DIAGNOSTICS_TOKEN?.trim();
   if (diagnosticsToken) {
     await putSecret(token, row.accountId, row.workerName, "DOTNOTE_DIAGNOSTICS_TOKEN", diagnosticsToken);
+  }
+}
+
+/**
+ * Puts a new setup code on the Worker when the browser that held the old one
+ * is gone. Before the `secrets` step the step itself stores it.
+ */
+export async function replaceHandoff(token: string, row: Installation, handoffHash: string): Promise<void> {
+  row.handoffHash = handoffHash;
+  const secretsStep = STEPS.findIndex((step) => step.id === "secrets");
+  if (row.stepIndex > secretsStep) {
+    await putSecret(token, row.accountId, row.workerName, "DOTNOTE_HANDOFF", handoffHash);
   }
 }
 

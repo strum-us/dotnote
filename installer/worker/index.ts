@@ -8,11 +8,12 @@ import {
   getInstallation,
   insertInstallation,
   listInstallations,
+  rekeyInstallation,
   saveInstallation,
   type Installation,
 } from "./install-store";
 import { loadRelease } from "./release";
-import { advance, removeInstallationResources, STEPS } from "./steps";
+import { advance, removeInstallationResources, replaceHandoff, STEPS } from "./steps";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -118,13 +119,16 @@ async function handle(env: Env, token: string, url: URL, body: Record<string, un
     return createInstallation(env, token, body);
   }
 
-  const stepMatch = /^\/api\/installations\/([^/]+)\/(step|cleanup|complete)$/.exec(path);
+  const stepMatch = /^\/api\/installations\/([^/]+)\/(step|cleanup|complete|resume)$/.exec(path);
   if (!stepMatch) return Response.json({ error: { code: "not_found", message: "Unknown request." } }, { status: 404 });
   const row = await getInstallation(env, stepMatch[1]);
   if (!row) return Response.json({ error: { code: "not_found", message: "That installation is gone." } }, { status: 404 });
   await getAccount(token, row.accountId);
   const action = stepMatch[2];
   if (action === "cleanup") return cleanup(env, token, row);
+  // Like cleanup, resuming needs only Cloudflare access to the account: the
+  // browser that started the install may be gone, and its key with it.
+  if (action === "resume") return resumeHere(env, token, row, body);
   const key = str(body.key);
   if (!key || !safeEqual(await sha256Hex(key), row.keyHash)) {
     return Response.json({ error: { code: "forbidden", message: "This browser cannot continue that installation." } }, { status: 403 });
@@ -275,6 +279,28 @@ async function createInstallation(env: Env, token: string, body: Record<string, 
     updatedAt: now,
   };
   await insertInstallation(env, row);
+  return Response.json({
+    installationId: row.id,
+    key,
+    address: row.address,
+    releaseVersion: row.releaseVersion,
+  });
+}
+
+/**
+ * Continue an installation in this browser. The old browser key and setup code
+ * stop working; an install that already reached its handoff gets the new code
+ * on the Worker, so this browser can hand over the Cloudflare permission.
+ */
+async function resumeHere(env: Env, token: string, row: Installation, body: Record<string, unknown>): Promise<Response> {
+  const handoffHash = str(body.handoffHash).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(handoffHash)) {
+    return Response.json({ error: { code: "bad_request", message: "The setup key was not accepted." } }, { status: 400 });
+  }
+  const key = randomKey();
+  row.keyHash = await sha256Hex(key);
+  await replaceHandoff(token, row, handoffHash);
+  await rekeyInstallation(env, row);
   return Response.json({
     installationId: row.id,
     key,

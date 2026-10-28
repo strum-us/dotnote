@@ -8,7 +8,9 @@ import { ReleaseNotesPreview } from "@/components/update/ReleaseNotesPreview";
 import { UpdateDialog, type UpdateDialogIntent } from "@/components/update/UpdateDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FieldCheck } from "@/components/ui/field-check";
 import { CLIENT_VERSION } from "@/lib/app-version";
+import { openSettingsSection } from "@/lib/settings-route";
 import { updateStatusSummary } from "@/lib/update-summary";
 import { cn } from "@/lib/utils";
 import { cloudflareStore } from "@/stores/cloudflare-store";
@@ -45,6 +47,7 @@ export const UpdateSettings = observer(function UpdateSettings() {
   const running = job?.status === "running";
   const blocked = check?.blockedReason ?? null;
   const needsReconnect = blocked === "missing_scopes" || blocked === "not_connected";
+  const tokenHelps = blocked === "unconfigured" || blocked === "not_connected";
   const workerVersion = updateStore.currentVersion ?? check?.currentVersion ?? "…";
 
   return (
@@ -140,6 +143,15 @@ export const UpdateSettings = observer(function UpdateSettings() {
                 Reconnect Cloudflare
               </Button>
             ) : null}
+            {tokenHelps ? (
+              <Button
+                size="sm"
+                variant={needsReconnect ? "outline" : "default"}
+                onClick={() => openSettingsSection("cloudflare")}
+              >
+                Use an API token…
+              </Button>
+            ) : null}
             {updateStore.phase === "done" ? (
               <Button size="sm" onClick={() => void updateStore.reload()}>
                 Reload page
@@ -180,6 +192,32 @@ export const UpdateSettings = observer(function UpdateSettings() {
 
           {check ? (
             <p className="text-micro text-dim">Last checked {new Date(check.checkedAt).toLocaleString()}</p>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Automatic updates</CardTitle>
+          <CardDescription>
+            {check?.credential === "token"
+              ? "Uses the API token stored on this Worker."
+              : check?.credential === "grant"
+                ? "Uses the Cloudflare permission this Dotnote stored at install."
+                : "Needs a Cloudflare permission or API token first."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <FieldCheck
+            id="auto-update"
+            checked={updateStore.autoUpdate}
+            disabled={updateStore.autoBusy || (!updateStore.autoUpdate && !check?.canUpdate)}
+            onCheckedChange={(enabled) => void updateStore.setAutoUpdate(enabled)}
+            label="Install new releases on their own"
+            description="Every 30 minutes this Dotnote checks for a release and installs it, even with no tab open. A release that asks for you, failed once, or that you went back from waits here instead. Open tabs offer a reload afterwards."
+          />
+          {check && !check.canUpdate && !updateStore.autoUpdate ? (
+            <p className="text-xs text-dim">Available once this Dotnote can update itself.</p>
           ) : null}
         </CardContent>
       </Card>

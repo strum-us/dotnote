@@ -324,21 +324,28 @@ async function showAccount() {
   shell(1, "Choose the account", h("p", { class: "hint" }, "Loading accounts…"));
   const { accounts } = await api("/api/accounts");
   const unfinished = [];
-  if (accounts.length === 1) {
-    const found = await api("/api/installations/find", { accountId: accounts[0].id });
-    unfinished.push(...found.installations.map((row) => ({ ...row, accountId: accounts[0].id })));
-  }
+  const found = await Promise.all(
+    accounts.slice(0, 10).map((item) =>
+      api("/api/installations/find", { accountId: item.id })
+        .then((result) => result.installations.map((row) => ({ ...row, accountId: item.id })))
+        .catch(() => []),
+    ),
+  );
+  unfinished.push(...found.flat());
   const buttons = accounts.map((item) =>
     h("button", { class: "choice", onclick: () => void pickAccount(item) }, item.name),
   );
   const resume = unfinished.map((row) => {
     const known = installs()[row.id];
+    // Deployed and live: only the Cloudflare permission is missing. Removing it here would delete a Dotnote in use.
+    const deployed = row.status === "ready";
     return h("div", { class: "row" },
       h("span", {}, `${row.workerName} · ${row.address}`),
+      deployed ? h("span", { class: "hint" }, "Deployed. Cloudflare access was not handed over yet.") : null,
       known
         ? h("button", { class: "ghost", onclick: () => void resumeInstall(row.id) }, "Continue")
-        : h("span", { class: "hint" }, "Started in another browser"),
-      h("button", { class: "ghost", onclick: () => void removeInstall(row) }, "Remove"),
+        : h("button", { class: "ghost", onclick: () => void continueHere(row) }, "Continue here"),
+      deployed ? null : h("button", { class: "ghost", onclick: () => void removeInstall(row) }, "Remove"),
     );
   });
   shell(
@@ -607,6 +614,26 @@ async function startDeploy(address, hostname, mode = "fresh", confirmWipe = fals
 async function resumeInstall(id) {
   sessionSet("dotnote.install.current", id);
   await runDeploy(id);
+}
+
+/** The browser that started this install is gone: take it over with a new key and setup code. */
+async function continueHere(row) {
+  const code = randomHex(32);
+  const handoffHash = await sha256Hex(code);
+  let resumed;
+  try {
+    resumed = await api(`/api/installations/${row.id}/resume`, { handoffHash });
+  } catch (err) {
+    shell(
+      1,
+      "Choose the account",
+      h("p", { class: "error" }, err instanceof Error ? err.message : "Could not continue that installation."),
+      h("button", { onclick: () => void showAccount() }, "Back"),
+    );
+    return;
+  }
+  saveInstall(row.id, { key: resumed.key, code, address: resumed.address || row.address, accountId: row.accountId });
+  await resumeInstall(row.id);
 }
 
 async function removeInstall(row) {

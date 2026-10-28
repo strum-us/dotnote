@@ -21,6 +21,10 @@
   "alias": {
     "@shared": "./shared"
   },
+  // Self-update without an open tab (worker/update/cron.ts). Idle unless automatic updates are on.
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  },
   "r2_buckets": [
     {
       "binding": "BUCKET",

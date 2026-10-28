@@ -5,6 +5,7 @@ import { contentHash } from "./crypto";
 import {
   acceptRefreshToken,
   consumeReconnectCode,
+  grantReadable,
   handoffConsumed,
   hmacHex,
   markHandoffConsumed,
@@ -40,7 +41,11 @@ installRoutes.post("/handoff", zValidator("json", handoffBody), async (c) => {
     reconnectOk = false;
   }
   if (!installOk && !reconnectOk) return c.json({ error: "This setup code was not accepted." }, 403);
-  if (installOk && !reconnectOk && (await handoffConsumed(c.env))) return c.json({ ok: true, already: true });
+  // A used setup code hands over again only while there is no grant to keep, so an
+  // install whose handoff never landed can still finish from the installer.
+  if (installOk && !reconnectOk && (await handoffConsumed(c.env)) && (await grantReadable(c.env))) {
+    return c.json({ ok: true, already: true });
+  }
 
   try {
     await acceptRefreshToken(c.env, {

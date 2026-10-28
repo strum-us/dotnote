@@ -200,12 +200,21 @@ export async function mintAccessToken(env: Env): Promise<{ accessToken: string; 
   }
 }
 
+/**
+ * Whether the current setup code was already used. The marker holds the
+ * DOTNOTE_HANDOFF hash it consumed, so an installer update or repair (which
+ * puts a new hash) can hand over once more. "1" is the marker from before it
+ * named the hash.
+ */
 export async function handoffConsumed(env: Env): Promise<boolean> {
   try {
     const row = await env.DB.prepare("SELECT value FROM install_state WHERE key = 'handoff_done'").first<{
       value: string;
     }>();
-    return row?.value === "1";
+    const value = row?.value;
+    if (!value) return false;
+    if (value === "1") return true;
+    return !!env.DOTNOTE_HANDOFF && safeEqual(value, env.DOTNOTE_HANDOFF);
   } catch {
     return false;
   }
@@ -213,9 +222,23 @@ export async function handoffConsumed(env: Env): Promise<boolean> {
 
 export async function markHandoffConsumed(env: Env): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO install_state (key, value) VALUES ('handoff_done', '1')
-     ON CONFLICT(key) DO UPDATE SET value = '1'`,
-  ).run();
+    `INSERT INTO install_state (key, value) VALUES ('handoff_done', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+  )
+    .bind(env.DOTNOTE_HANDOFF || "1")
+    .run();
+}
+
+/** A stored grant this Dotnote can still decrypt with its CF_GRANT_KEY. */
+export async function grantReadable(env: Env): Promise<boolean> {
+  try {
+    const row = await readGrant(env);
+    if (!row) return false;
+    await decrypt(env, row.refreshCiphertext, row.refreshIv);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function reconnectCodeMatches(env: Env, code: string): Promise<boolean> {

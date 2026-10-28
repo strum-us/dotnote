@@ -1,5 +1,7 @@
 import { isVersion } from "@shared/version";
 import type { Env } from "../env";
+import releaseKeys from "./release-keys.json";
+import { parseSignature, verifySignature, type ReleaseKey } from "./signature";
 
 export type ReleaseMigration = { name: string; since: string; statements: string[] };
 export type ReleaseAsset = { path: string; hash: string; size: number; contentType: string };
@@ -10,6 +12,8 @@ export type ReleaseManifest = {
   releasedAt: string | null;
   notes: string | null;
   rolloutPercent: number;
+  /** False when the release notes say `auto: false`: only the owner starts it. */
+  autoUpdate: boolean;
   workerSha256: string;
   sizeBytes: number;
   compatibilityDate: string;
@@ -21,6 +25,11 @@ export type ReleaseManifest = {
 /** Shared by every request on this isolate, and by every isolate in the colo through the Cache API. */
 const MANIFEST_TTL_MS = 15 * 60 * 1000;
 let memo: { url: string; at: number; manifest: ReleaseManifest } | null = null;
+
+const RELEASE_KEYS: ReleaseKey[] = releaseKeys.keys;
+
+/** The manifest as the installer sent it, with its detached signature. Cached in this form and checked again on read. */
+type SignedManifest = { body: string; signature: string };
 
 export function installerOrigin(env: Env): string | null {
   const origin = env.INSTALLER_ORIGIN?.trim().replace(/\/$/, "");
@@ -49,6 +58,7 @@ function parseManifest(value: unknown): ReleaseManifest {
     releasedAt: typeof raw.releasedAt === "string" ? raw.releasedAt : null,
     notes: typeof raw.notes === "string" ? raw.notes : null,
     rolloutPercent: typeof raw.rolloutPercent === "number" ? raw.rolloutPercent : 100,
+    autoUpdate: raw.autoUpdate !== false,
     workerSha256: raw.workerSha256 as string,
     sizeBytes: typeof raw.sizeBytes === "number" ? raw.sizeBytes : 0,
     compatibilityDate: raw.compatibilityDate as string,
@@ -58,17 +68,35 @@ function parseManifest(value: unknown): ReleaseManifest {
   };
 }
 
-async function fetchManifest(url: string): Promise<ReleaseManifest | null> {
-  const res = await fetch(url, { headers: { accept: "application/json" } });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`The installer answered ${res.status} for ${new URL(url).pathname}.`);
+/** Nothing in the manifest is read before its signature checks out. */
+async function openManifest(signed: SignedManifest): Promise<ReleaseManifest> {
+  const signature = parseSignature(signed.signature);
+  const bytes = new TextEncoder().encode(signed.body);
+  if (!signature || !(await verifySignature(RELEASE_KEYS, bytes, signature))) {
+    throw new Error("The installer sent a release that is not signed by Dotnote.");
+  }
   let json: unknown;
   try {
-    json = await res.json();
+    json = JSON.parse(signed.body);
   } catch {
     throw new Error("The installer did not send a release manifest.");
   }
   return parseManifest(json);
+}
+
+async function fetchSigned(url: string): Promise<SignedManifest | null> {
+  const res = await fetch(url, { headers: { accept: "application/json" } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`The installer answered ${res.status} for ${new URL(url).pathname}.`);
+  const body = new TextDecoder().decode(await res.arrayBuffer());
+  const sig = await fetch(`${url}.sig`);
+  if (!sig.ok) throw new Error(`The installer has no signature for ${new URL(url).pathname}.`);
+  return { body, signature: await sig.text() };
+}
+
+async function fetchManifest(url: string): Promise<ReleaseManifest | null> {
+  const signed = await fetchSigned(url);
+  return signed ? openManifest(signed) : null;
 }
 
 /** The app tsconfig also loads the DOM lib, whose CacheStorage has no `default`. */
@@ -79,15 +107,15 @@ function zoneCache(): Cache {
 async function cacheRead(url: string): Promise<ReleaseManifest | null> {
   try {
     const hit = await zoneCache().match(new Request(url));
-    return hit ? parseManifest(await hit.json()) : null;
+    return hit ? await openManifest((await hit.json()) as SignedManifest) : null;
   } catch {
     return null;
   }
 }
 
-async function cacheWrite(url: string, manifest: ReleaseManifest): Promise<void> {
+async function cacheWrite(url: string, signed: SignedManifest): Promise<void> {
   try {
-    const body = JSON.stringify(manifest);
+    const body = JSON.stringify(signed);
     const headers = { "content-type": "application/json", "cache-control": `max-age=${MANIFEST_TTL_MS / 1000}` };
     await zoneCache().put(new Request(url), new Response(body, { headers }));
   } catch {
@@ -106,10 +134,11 @@ export async function latestRelease(env: Env, options: { force?: boolean } = {})
       return cached;
     }
   }
-  const manifest = await fetchManifest(url);
-  if (!manifest) throw new Error("The installer has no Dotnote release yet.");
+  const signed = await fetchSigned(url);
+  if (!signed) throw new Error("The installer has no Dotnote release yet.");
+  const manifest = await openManifest(signed);
   memo = { url, at: Date.now(), manifest };
-  await cacheWrite(url, manifest);
+  await cacheWrite(url, signed);
   return manifest;
 }
 
@@ -146,18 +175,13 @@ export async function workerSource(env: Env, release: ReleaseManifest): Promise<
   throw new Error(`The installer's Worker for Dotnote ${release.version} did not match its manifest.`);
 }
 
+/** A release file, checked against its name: the signed manifest names each file by the start of its SHA-256. */
 export async function assetBytes(env: Env, hash: string): Promise<Uint8Array<ArrayBuffer>> {
   const res = await fetch(`${requireOrigin(env)}/release/files/${hash}`);
   if (!res.ok) throw new Error(`The release is missing file ${hash}.`);
-  return new Uint8Array(await res.arrayBuffer());
-}
-
-/** Stable 0–99 bucket per instance, so a staged rollout reaches the same instances as it widens. */
-export function rolloutBucket(key: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < key.length; i++) {
-    hash ^= key.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (hash.length < 32 || !(await sha256Hex(bytes)).startsWith(hash)) {
+    throw new Error(`The installer's file ${hash} did not match the release.`);
   }
-  return (hash >>> 0) % 100;
+  return bytes;
 }
