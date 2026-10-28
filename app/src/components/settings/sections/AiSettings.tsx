@@ -3,11 +3,11 @@ import { ExternalLink, KeyRound, MoreHorizontal, Plus, RefreshCw, Trash2 } from 
 import { observer } from "mobx-react-lite";
 import { toast } from "sonner";
 import {
-  LLM_MODEL_CATALOG,
   LLM_PROVIDER_META,
   findLlmModel,
   formatLlmModelPrice,
   getLlmProviderMeta,
+  textModelsForProvider,
   type LlmProviderId,
 } from "@shared/llm";
 import { SettingsField, SettingsSectionShell } from "@/components/settings/SettingsSectionShell";
@@ -58,19 +58,20 @@ export const AiSettings = observer(function AiSettings() {
     const savedProvider = settings.activeProvider;
     if (settings.configuredProviders[savedProvider]) {
       setActiveProvider(savedProvider);
-      setModel(settings.model);
+      const selectable = textModelsForProvider(savedProvider);
+      setModel(selectable.some((m) => m.id === settings.model) ? settings.model : (selectable[0]?.id ?? settings.model));
       return;
     }
     const fallback = LLM_PROVIDER_META.find((p) => settings.configuredProviders[p.id]);
     if (fallback) {
       setActiveProvider(fallback.id);
-      setModel(LLM_MODEL_CATALOG[fallback.id][0]?.id ?? settings.model);
+      setModel(textModelsForProvider(fallback.id)[0]?.id ?? settings.model);
     }
   }, [settings]);
 
   const modelOptions = useMemo(
     () =>
-      LLM_MODEL_CATALOG[activeProvider].map((m) => ({
+      textModelsForProvider(activeProvider).map((m) => ({
         value: m.id,
         label: m.label,
         detail: formatLlmModelPrice(m),
@@ -83,7 +84,7 @@ export const AiSettings = observer(function AiSettings() {
   const handleProviderChange = (value: string) => {
     const provider = value as LlmProviderId;
     setActiveProvider(provider);
-    setModel(LLM_MODEL_CATALOG[provider][0]?.id ?? "");
+    setModel(textModelsForProvider(provider)[0]?.id ?? "");
   };
 
   const saveModel = async () => {
@@ -307,7 +308,10 @@ export const AiSettings = observer(function AiSettings() {
               </SettingsField>
             </div>
           )}
-          {selectedModelMeta && !activeModelDisabled ? (
+          {selectedModelMeta?.thinking === "always-on" ? (
+            <p className="text-xs text-danger">This model always reasons. Choose another one — reasoning stays off for notes.</p>
+          ) : null}
+          {selectedModelMeta && !activeModelDisabled && selectedModelMeta.thinking !== "always-on" ? (
             <p className="text-xs text-dim">
               {formatUsd(selectedModelMeta.inputPer1MUsd)} / {formatUsd(selectedModelMeta.outputPer1MUsd)} per 1M tokens (in / out)
               {selectedModelMeta.contextTokens ? ` · ${selectedModelMeta.contextTokens.toLocaleString()} context` : ""}
@@ -318,7 +322,7 @@ export const AiSettings = observer(function AiSettings() {
             <Button
               variant="default"
               onClick={() => void saveModel()}
-              disabled={llmStore.saving || !modelDirty || activeModelDisabled}
+              disabled={llmStore.saving || !modelDirty || activeModelDisabled || selectedModelMeta?.thinking === "always-on"}
             >
               {llmStore.saving ? "Saving…" : "Save model"}
             </Button>

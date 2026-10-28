@@ -1,10 +1,11 @@
-import type { AiImageGenerateResponse } from "@shared/llm";
+import type { AiImageGenerateResponse, AiSourceImagePayload } from "@shared/llm";
 import { ApiError } from "@/lib/api";
 
 export type AiImageGenerateRequest = {
   prompt: string;
   /** Note or selection context for the Worker to prepend. */
   context?: string;
+  sourceImage?: AiSourceImagePayload;
 };
 
 export async function generateAiImage(body: AiImageGenerateRequest, signal: AbortSignal): Promise<AiImageGenerateResponse> {
@@ -35,6 +36,9 @@ function errorPayloadMessage(parsed: unknown): string | undefined {
 export function aiImageErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     const fromBody = errorPayloadMessage(err.body);
+    if (fromBody === "image_input_unsupported" || err.message === "image_input_unsupported") {
+      return "This image model can't edit an existing image. Switch to a Gemini image model.";
+    }
     if (fromBody) return fromBody;
     if (err.message === "no_gemini_key") {
       return "Add a Google Gemini API key in Settings → AI Image.";

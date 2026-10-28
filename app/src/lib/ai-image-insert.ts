@@ -1,7 +1,8 @@
 import type { BlockNoteEditor } from "@blocknote/core";
 import { aiAnchorBlockId, type AiTarget } from "@/lib/ai-editor";
+import { AI_JOB_PLACEHOLDER_URL, aiJobImageName } from "@/lib/ai-job-markdown";
 import type { ImageOptimizationSettings } from "@/lib/image-settings";
-import { ingestPageFile, markdownForIngestedFile } from "@/lib/page-file-ingest";
+import { ingestPageFile } from "@/lib/page-file-ingest";
 
 function extensionFromBlob(blob: Blob): string {
   const mime = (blob.type || "").toLowerCase();
@@ -11,21 +12,55 @@ function extensionFromBlob(blob: Blob): string {
   return "png";
 }
 
-export async function insertGeneratedImageAtTarget(
-  editor: BlockNoteEditor,
-  target: AiTarget,
-  workspaceId: string,
-  notePath: string,
+type Editor = BlockNoteEditor<any, any, any>;
+
+export function insertImagePlaceholder(editor: Editor, target: AiTarget, jobId: string): string {
+  const [block] = editor.insertBlocks(
+    [
+      {
+        type: "image",
+        props: {
+          url: AI_JOB_PLACEHOLDER_URL,
+          name: aiJobImageName(jobId),
+          caption: "",
+          showPreview: true,
+        },
+      },
+    ] as never[],
+    aiAnchorBlockId(target),
+    "after",
+  );
+  return block.id;
+}
+
+export async function completeImagePlaceholder(
+  editor: Editor,
+  placeholderBlockId: string,
+  anchorBlockId: string,
   blob: Blob,
-  settings: ImageOptimizationSettings,
+  ctx: { workspaceId: string; notePath: string; settings: ImageOptimizationSettings },
 ): Promise<void> {
   const ext = extensionFromBlob(blob);
   const file = new File([blob], `ai-generated.${ext}`, { type: blob.type || "image/png" });
-  const ingested = await ingestPageFile({ file, workspaceId, notePath, settings });
+  const ingested = await ingestPageFile({ file, ...ctx });
+  const props = { url: ingested.markdownUrl, name: ingested.name, caption: "" };
   try {
-    editor.setTextCursorPosition(aiAnchorBlockId(target), "end");
+    editor.updateBlock(placeholderBlockId, { type: "image", props } as never);
+    return;
   } catch {
-    // anchor block may not accept a text cursor (e.g. image-only)
+    // The placeholder was removed while the request was in flight.
   }
-  editor.pasteMarkdown(markdownForIngestedFile(ingested));
+  try {
+    editor.insertBlocks([{ type: "image", props }] as never[], anchorBlockId, "after");
+  } catch {
+    throw new Error("The image was saved but could not be placed in the note.");
+  }
+}
+
+export function removeImagePlaceholder(editor: Editor, blockId: string): void {
+  try {
+    editor.removeBlocks([blockId]);
+  } catch {
+    // already gone
+  }
 }

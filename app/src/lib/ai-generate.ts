@@ -64,6 +64,9 @@ export async function generateAi(
 export function aiErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.message === "no_api_key") return "Add an API key for the selected provider in Settings → AI.";
+    if (err.message === "thinking_required") {
+      return "This model always reasons, which is turned off for notes. Pick another model.";
+    }
     if (err.status === 400) return "The note or instruction is too long to send to the AI.";
     return `The AI request failed (${err.status}).`;
   }

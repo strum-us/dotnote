@@ -6,9 +6,11 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import "@blocknote/shadcn/style.css";
 import "@/markdown-editor.css";
 import { AiPromptBar } from "@/components/ai/AiPromptBar";
+import { AiImageJobLayer } from "@/components/ai/AiImageJobOverlay";
 import { AiOpenContext, EditorFormattingToolbar } from "@/components/ai/AiToolbarButton";
 import { useImageSettings } from "@/hooks/useImageSettings";
 import { captureAiTarget, restoreSelection, type AiTarget } from "@/lib/ai-editor";
+import { stripAiJobImages } from "@/lib/ai-job-markdown";
 import { collectTransferFiles, transferHasFiles } from "@/lib/image-optimize";
 import { resolveMarkdownAssetHref } from "@/lib/page-assets-client";
 import { pathForNoteId } from "@/lib/search-nav";
@@ -22,6 +24,7 @@ import { themeStore } from "@/stores/theme-store";
 import { uiPreferenceStore } from "@/stores/ui-preference-store";
 import { MARKDOWN_COLUMN_CLASS } from "@/components/MarkdownRawEditor";
 import { noteStore } from "@/stores/note-store";
+import { aiStore } from "@/stores/ai-store";
 import { workspaceStore } from "@/stores/workspace-store";
 import { EditorContentSkeleton } from "@/components/WorkspaceLoading";
 
@@ -203,6 +206,22 @@ const BlockEditor = observer(function BlockEditor({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [closeAi, editor, openAi]);
 
+  useEffect(() => () => aiStore.cancelJobsForNote(noteId), [noteId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || aiTargetRef.current) return;
+      const active = [...aiStore.jobs.values()]
+        .filter((job) => job.noteId === noteId && (job.phase === "generating" || job.phase === "saving"))
+        .sort((a, b) => b.startedAt - a.startedAt)[0];
+      if (!active) return;
+      event.preventDefault();
+      aiStore.cancelJob(active.id);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [noteId]);
+
   const saveViewState = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -227,7 +246,9 @@ const BlockEditor = observer(function BlockEditor({
     void (async () => {
       // A note that is only an empty heading ("# ") opens as an empty title, not a literal "#".
       const blankTitle = /^\s*#{1,6}\s*$/.test(initialRef.current);
-      const parsed = await editor.tryParseMarkdownToBlocks(blankTitle ? "" : initialRef.current || "");
+      const parsed = await editor.tryParseMarkdownToBlocks(
+        blankTitle ? "" : stripAiJobImages(initialRef.current || ""),
+      );
       if (cancelled) return;
       const blocks = focusRef.current || blankTitle ? withEmptyTitle(parsed) : parsed;
       editor.replaceBlocks(editor.document, blocks);
@@ -304,7 +325,7 @@ const BlockEditor = observer(function BlockEditor({
             formattingToolbar={false}
             onChange={() => {
               if (hydrating.current) return;
-              onChange(editor.blocksToMarkdownLossy(editor.document));
+              onChange(stripAiJobImages(editor.blocksToMarkdownLossy(editor.document)));
               scheduleCaretSave();
             }}
           >
@@ -317,6 +338,7 @@ const BlockEditor = observer(function BlockEditor({
             target={aiTarget}
             containerRef={columnRef}
             workspaceId={workspaceId}
+            noteId={noteId}
             notePath={notePath}
             imageSettings={settings}
             onClose={closeAi}
@@ -324,6 +346,7 @@ const BlockEditor = observer(function BlockEditor({
             onOpenImageSettings={openAiImageSettings}
           />
         ) : null}
+        <AiImageJobLayer editor={editor} noteId={noteId} containerRef={columnRef} />
       </div>
     </div>
   );

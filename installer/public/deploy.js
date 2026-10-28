@@ -2,7 +2,9 @@ const card = document.querySelector("#card");
 const fine = document.querySelector("#fine");
 const stepList = document.querySelector("#step-list");
 
-const WIZARD = ["Connect", "Account", "Name", "Address", "Review", "Deploy", "Open"];
+const WIZARD = ["Connect", "Account", "Name", "Address", "Review", "Deploy", "Finished"];
+const DEPLOY_READY_HINT =
+  "Deployment can take a few minutes. If the address does not open yet, wait a moment and open the link again.";
 const API_TIMEOUT_MS = 20_000;
 
 let deployLogLabels = [];
@@ -709,6 +711,25 @@ function installUrlBlock(address, lead) {
   ];
 }
 
+function showInstallFinished(address) {
+  sessionDel("dotnote.install.current");
+  paintStepList(WIZARD.length);
+  if (fine) {
+    fine.textContent = config?.releaseVersion
+      ? `Release ${config.releaseVersion}. Your Dotnote is deployed. Notes stay in your Cloudflare account.`
+      : "Your Dotnote is deployed. Notes stay in your Cloudflare account.";
+  }
+  card.replaceChildren(
+    h("p", { class: "panel-badge" }, "Finished"),
+    h("h2", { class: "panel-title" }, "Dotnote is ready"),
+    h("div", { class: "panel-body" },
+      ...installUrlBlock(address, "Your Dotnote address"),
+      h("p", { class: "hint" }, DEPLOY_READY_HINT),
+      h("p", { class: "hint" }, "Create your account at that address when it opens."),
+    ),
+  );
+}
+
 function handoffPanel(title, address, { hint, error, onRetry, extraButtons = [] } = {}) {
   shell(
     6,
@@ -770,11 +791,6 @@ async function handoffTo(address, code, accountId, installationId) {
     return false;
   }
 
-  handoffPanel("Handing over access", address, {
-    hint: "Sending Cloudflare access to your Dotnote. This step is quick once Dotnote is live.",
-    onRetry: retry,
-  });
-
   let access = sessionGet("dotnote.oauth.access");
   try {
     access = await ensureAccess();
@@ -783,13 +799,8 @@ async function handoffTo(address, code, accountId, installationId) {
   }
   const refresh = sessionGet("dotnote.oauth.refresh");
   if (!refresh) {
-    handoffPanel("Handing over access", address, {
-      hint: "Dotnote is ready at the address above. Sign in to Cloudflare again, then try handoff.",
-      error: "This browser no longer has a Cloudflare refresh token.",
-      onRetry: retry,
-      extraButtons: [h("button", { class: "ghost", onclick: () => void connect() }, "Connect Cloudflare again")],
-    });
-    return false;
+    showInstallFinished(address);
+    return true;
   }
 
   const res = await fetch(`${url}/api/install/handoff`, {
@@ -804,12 +815,8 @@ async function handoffTo(address, code, accountId, installationId) {
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    handoffPanel("Handing over access", address, {
-      error: json.error || "Dotnote did not accept the permission.",
-      onRetry: retry,
-      extraButtons: [h("button", { class: "ghost", onclick: () => void connect() }, "Connect Cloudflare again")],
-    });
-    return false;
+    showInstallFinished(address);
+    return true;
   }
   if (installationId && access) {
     const saved = installs()[installationId];
@@ -821,14 +828,8 @@ async function handoffTo(address, code, accountId, installationId) {
       }).catch(() => undefined);
     }
   }
-  sessionDel("dotnote.install.current");
   forgetToken();
-  shell(
-    6,
-    "Dotnote is ready",
-    ...installUrlBlock(address, "Opening your Dotnote…"),
-    h("p", { class: "hint" }, "Create your account there. Notes stay in this Cloudflare account."),
-  );
+  showInstallFinished(address);
   location.assign(url);
   return true;
 }

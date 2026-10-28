@@ -1,5 +1,6 @@
 import { inlineContentToNodes, type Block, type BlockNoteEditor } from "@blocknote/core";
 import type { AiGenerateRequest } from "@/lib/ai-generate";
+import { isAiJobImageName, stripAiJobImages } from "@/lib/ai-job-markdown";
 
 // Loose typing: these helpers work on whatever schema the note editor uses.
 type AnyBlock = Block<any, any, any>;
@@ -14,7 +15,9 @@ export type AiTarget =
   /** A selection across blocks; the reply replaces those whole blocks. */
   | { kind: "blocks"; blockIds: string[]; markdown: string; document: string }
   /** No selection; the reply goes after (or into, when empty) the cursor block. */
-  | { kind: "cursor"; blockId: string; replaceEmpty: boolean; contextMarkdown: string; document: string };
+  | { kind: "cursor"; blockId: string; replaceEmpty: boolean; contextMarkdown: string; document: string }
+  /** An existing image; a new image is generated from it and inserted below. */
+  | { kind: "image"; blockId: string; url: string; name: string; document: string };
 
 function blockIdAt($pos: ResolvedPos): string | null {
   for (let depth = $pos.depth; depth >= 0; depth--) {
@@ -36,10 +39,36 @@ function trimMarkdown(markdown: string): string {
   return markdown.replace(/\n+$/, "");
 }
 
+function imageTargetFromBlock(block: AnyBlock | undefined, document: string): AiTarget | null {
+  if (!block || block.type !== "image") return null;
+  const props = block.props as { url?: string; name?: string };
+  const url = (props.url ?? "").trim();
+  const name = props.name ?? "";
+  if (!url || isAiJobImageName(name)) return null;
+  return { kind: "image", blockId: block.id, url, name: name || "image", document };
+}
+
 export function captureAiTarget(editor: Editor): AiTarget | null {
   const state = editor.prosemirrorState;
   const { selection } = state;
-  const document = trimMarkdown(editor.blocksToMarkdownLossy(editor.document));
+  const document = stripAiJobImages(trimMarkdown(editor.blocksToMarkdownLossy(editor.document)));
+
+  if (!selection.empty) {
+    const selected = editor.getSelection()?.blocks ?? [];
+    if (selected.length === 1) {
+      const image = imageTargetFromBlock(selected[0], document);
+      if (image) return image;
+    }
+  } else {
+    let cursorBlock: AnyBlock | undefined;
+    try {
+      cursorBlock = editor.getTextCursorPosition().block;
+    } catch {
+      cursorBlock = undefined;
+    }
+    const image = imageTargetFromBlock(cursorBlock, document);
+    if (image) return image;
+  }
 
   if (selection.empty) {
     const block = editor.getTextCursorPosition().block;
@@ -79,11 +108,12 @@ export function captureAiTarget(editor: Editor): AiTarget | null {
 
 export function aiRequestContext(target: AiTarget): Omit<AiGenerateRequest, "turns"> {
   if (target.kind === "cursor") return { document: target.document, cursorBlock: target.contextMarkdown };
+  if (target.kind === "image") return { document: target.document };
   return { document: target.document, selection: { kind: target.kind, markdown: target.markdown } };
 }
 
 export function aiHasSelection(target: AiTarget): boolean {
-  return target.kind !== "cursor";
+  return target.kind === "inline" || target.kind === "blocks";
 }
 
 /** Block the bar anchors under and "Insert below" inserts after. */
@@ -92,7 +122,7 @@ export function aiAnchorBlockId(target: AiTarget): string {
   return target.blockId;
 }
 
-function blockElement(editor: Editor, blockId: string): HTMLElement | null {
+export function blockElement(editor: Editor, blockId: string): HTMLElement | null {
   return editor.domElement?.querySelector<HTMLElement>(`[data-node-type="blockOuter"][data-id="${CSS.escape(blockId)}"]`) ?? null;
 }
 
@@ -124,7 +154,12 @@ export function showAiHighlight(editor: Editor, target: AiTarget): () => void {
 
   const range = document.createRange();
   try {
-    if (target.kind === "inline") {
+    if (target.kind === "image") {
+      const el = blockElement(editor, target.blockId);
+      if (!el) return () => {};
+      range.setStartBefore(el);
+      range.setEndAfter(el);
+    } else if (target.kind === "inline") {
       const view = editor.prosemirrorView;
       const start = view.domAtPos(target.from);
       const end = view.domAtPos(target.to);
@@ -146,6 +181,7 @@ export function showAiHighlight(editor: Editor, target: AiTarget): () => void {
 
 /** Collapse the selection so BlockNote's formatting toolbar steps aside. */
 export function collapseSelection(editor: Editor, target: AiTarget): void {
+  if (target.kind === "image") return;
   if (target.kind === "inline") editor._tiptapEditor.commands.setTextSelection(target.to);
   else if (target.kind === "blocks") editor.setTextCursorPosition(aiAnchorBlockId(target), "end");
 }
@@ -158,6 +194,8 @@ export function restoreSelection(editor: Editor, target: AiTarget): void {
       editor._tiptapEditor.commands.setTextSelection({ from: target.from, to: target.to });
     } else if (target.kind === "blocks") {
       editor.setSelection(target.blockIds[0], target.blockIds[target.blockIds.length - 1]);
+    } else if (target.kind === "image") {
+      editor.setSelection(target.blockId, target.blockId);
     } else {
       editor.setTextCursorPosition(target.blockId, "end");
     }
@@ -224,6 +262,11 @@ export async function applyAiOutput(
     }
     const { insertedBlocks } = editor.replaceBlocks(target.blockIds, parsed);
     placeCursorAfter(editor, insertedBlocks);
+    return true;
+  }
+
+  if (target.kind === "image") {
+    insertBelow();
     return true;
   }
 

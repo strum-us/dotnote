@@ -2,6 +2,7 @@ import { makeAutoObservable, runInAction } from "mobx";
 import { noteApi } from "@/lib/api";
 import { readCache, writeCache } from "@/lib/idb-cache";
 import type { HistoryTrigger } from "@/lib/sync-ops";
+import { stripAiJobImages } from "@/lib/ai-job-markdown";
 import { replaceMarkdownTitle, titleFromMarkdown } from "@shared/title";
 import { emitFileWrite } from "@/lib/file-write-events";
 import { pathForNoteId, recordOpenedNote } from "@/lib/search-nav";
@@ -152,8 +153,9 @@ class NoteStore {
     this.loadFailed = false;
   }
 
-  setContent(workspaceId: string, value: string): void {
+  setContent(workspaceId: string, raw: string): void {
     if (!this.openNoteId || !this.editorReady || workspaceId !== this.openWorkspaceId) return;
+    const value = stripAiJobImages(raw);
     const changed = this.content !== value;
     this.content = value;
     workspaceStore.applyNoteTitle(this.openNoteId, titleFromMarkdown(value));

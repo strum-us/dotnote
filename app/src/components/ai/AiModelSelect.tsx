@@ -1,7 +1,7 @@
 import { AlertCircle, Check, ChevronDown, Settings } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { toast } from "sonner";
-import { LLM_MODEL_CATALOG, compactModelLabel, formatLlmModelPrice, type LlmProviderId } from "@shared/llm";
+import { compactModelLabel, formatLlmModelPrice, textModelsForProvider, type LlmProviderId } from "@shared/llm";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -84,7 +84,7 @@ export const AiModelSelect = observer(function AiModelSelect({
               <span>{provider.name}</span>
               <span className="font-normal tabular-nums">$/1M in/out</span>
             </DropdownMenuLabel>
-            {LLM_MODEL_CATALOG[provider.id].map((m) => {
+            {textModelsForProvider(provider.id).map((m) => {
               const selected = settings.activeProvider === provider.id && settings.model === m.id;
               return (
                 <DropdownMenuItem

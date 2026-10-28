@@ -9,9 +9,13 @@ import {
   DEFAULT_LLM_PROVIDER,
   IMAGE_ASPECT_RATIOS,
   LLM_PROVIDER_IDS,
+  findImageModel,
   getImageModelProvider,
+  IMAGE_INPUT_MIME_TYPES,
   isImageAspectRatio,
   isLlmProviderId,
+  thinkingControlFor,
+  type AiSourceImagePayload,
   type LlmChatMessage,
   type LlmProviderId,
   type LlmSettingsView,
@@ -189,8 +193,11 @@ async function* streamAnthropic(apiKey: string, model: string, messages: LlmChat
         max_tokens: 32_000,
         system: SYSTEM_PROMPT,
         messages,
-        // Editing prose is a light task; low effort keeps replies quick.
+        // Editing prose is a light task; low effort keeps replies quick, and thinking stays off.
         ...(supportsEffort(model) ? { output_config: { effort: "low" as const } } : {}),
+        ...(thinkingControlFor("anthropic", model) === "disable-param"
+          ? { thinking: { type: "disabled" as const } }
+          : {}),
         // On a policy decline, retry on the model's default fallback; a no-op where unsupported.
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
@@ -252,6 +259,12 @@ async function providerFailure(name: string, res: Response): Promise<ProviderErr
 }
 
 /** OpenAI and xAI both serve the Chat Completions streaming shape. */
+function chatCompletionsExtras(provider: "openai" | "xai", model: string): Record<string, unknown> {
+  if (thinkingControlFor(provider, model) !== "effort-none") return {};
+  // "none" is the off switch. Models that cannot accept it are marked non-reasoning-only and skip this.
+  return { reasoning_effort: "none" };
+}
+
 async function* streamChatCompletions(
   name: string,
   url: string,
@@ -259,11 +272,17 @@ async function* streamChatCompletions(
   model: string,
   messages: LlmChatMessage[],
   signal: AbortSignal,
+  extras: Record<string, unknown>,
 ) {
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model, stream: true, messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages] }),
+    body: JSON.stringify({
+      model,
+      stream: true,
+      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+      ...extras,
+    }),
     signal,
   });
   if (!res.ok || !res.body) throw await providerFailure(name, res);
@@ -273,22 +292,36 @@ async function* streamChatCompletions(
   }
 }
 
+/** Gemini 2.5 accepts a zero budget. Gemini 3 rejects that field and uses a level instead. */
+function geminiThinkingOff(model: string): Record<string, unknown> {
+  if (/^gemini-2\.5-/.test(model)) return { thinkingBudget: 0 };
+  return { thinkingLevel: "MINIMAL" };
+}
+
+type GeminiTextPart = { text?: string; thought?: boolean };
+
 async function* streamGemini(apiKey: string, model: string, messages: LlmChatMessage[], signal: AbortSignal) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
+  const thinking =
+    thinkingControlFor("gemini", model) === "disable-param" ? { thinkingConfig: geminiThinkingOff(model) } : undefined;
   const res = await fetch(url, {
     method: "POST",
     headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       contents: messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
+      ...(thinking ? { generationConfig: thinking } : {}),
     }),
     signal,
   });
   if (!res.ok || !res.body) throw await providerFailure("Gemini", res);
   for await (const chunk of sseData(res.body)) {
-    const parts = (chunk as { candidates?: { content?: { parts?: { text?: string }[] } }[] }).candidates?.[0]?.content
+    const parts = (chunk as { candidates?: { content?: { parts?: GeminiTextPart[] } }[] }).candidates?.[0]?.content
       ?.parts;
-    for (const part of parts ?? []) if (part.text) yield part.text;
+    for (const part of parts ?? []) {
+      if (part.thought) continue;
+      if (part.text) yield part.text;
+    }
   }
 }
 
@@ -303,9 +336,25 @@ function streamProvider(
     case "anthropic":
       return streamAnthropic(apiKey, model, messages, signal);
     case "openai":
-      return streamChatCompletions("OpenAI", "https://api.openai.com/v1/chat/completions", apiKey, model, messages, signal);
+      return streamChatCompletions(
+        "OpenAI",
+        "https://api.openai.com/v1/chat/completions",
+        apiKey,
+        model,
+        messages,
+        signal,
+        chatCompletionsExtras("openai", model),
+      );
     case "xai":
-      return streamChatCompletions("xAI", "https://api.x.ai/v1/chat/completions", apiKey, model, messages, signal);
+      return streamChatCompletions(
+        "xAI",
+        "https://api.x.ai/v1/chat/completions",
+        apiKey,
+        model,
+        messages,
+        signal,
+        chatCompletionsExtras("xai", model),
+      );
     case "gemini":
       return streamGemini(apiKey, model, messages, signal);
   }
@@ -365,9 +414,26 @@ llmRoutes.patch(
 const imageGenerateSchema = z.object({
   prompt: z.string().min(1).max(4_000),
   context: z.string().max(200_000).optional(),
+  sourceImage: z
+    .object({
+      mimeType: z.enum(IMAGE_INPUT_MIME_TYPES),
+      dataBase64: z.string().min(1).max(14_000_000),
+    })
+    .optional(),
 });
 
 type GeminiImagePart = { inlineData?: { mimeType?: string; data?: string }; text?: string };
+
+function imagePromptText(prompt: string, context: string | undefined, hasSource: boolean): string {
+  const parts: string[] = [];
+  if (context?.trim()) parts.push(`Context from the user's note:\n${context.trim()}`);
+  parts.push(
+    hasSource
+      ? `Edit the attached image to match this description:\n${prompt.trim()}`
+      : `Create an image for this description:\n${prompt.trim()}`,
+  );
+  return parts.join("\n\n");
+}
 
 async function generateGeminiImage(
   apiKey: string,
@@ -375,17 +441,20 @@ async function generateGeminiImage(
   aspectRatio: string,
   prompt: string,
   context: string | undefined,
+  sourceImage: AiSourceImagePayload | undefined,
   signal: AbortSignal,
 ): Promise<{ mimeType: string; dataBase64: string; caption?: string }> {
-  const parts: string[] = [];
-  if (context?.trim()) parts.push(`Context from the user's note:\n${context.trim()}`);
-  parts.push(`Create an image for this description:\n${prompt.trim()}`);
+  const userParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+  if (sourceImage) {
+    userParts.push({ inlineData: { mimeType: sourceImage.mimeType, data: sourceImage.dataBase64 } });
+  }
+  userParts.push({ text: imagePromptText(prompt, context, Boolean(sourceImage)) });
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: parts.join("\n\n") }] }],
+      contents: [{ role: "user", parts: userParts }],
       generationConfig: {
         responseModalities: ["TEXT", "IMAGE"],
         imageConfig: { aspectRatio },
@@ -427,17 +496,43 @@ async function generateOpenAiImage(
   aspectRatio: string,
   prompt: string,
   context: string | undefined,
+  sourceImage: AiSourceImagePayload | undefined,
   signal: AbortSignal,
 ): Promise<{ mimeType: string; dataBase64: string; caption?: string }> {
-  const parts: string[] = [];
-  if (context?.trim()) parts.push(`Context from the user's note:\n${context.trim()}`);
-  parts.push(`Create an image for this description:\n${prompt.trim()}`);
+  const promptText = imagePromptText(prompt, context, Boolean(sourceImage));
+  if (sourceImage) {
+    if (model !== "dall-e-2") throw new ProviderError("image_input_unsupported");
+    const binary = atob(sourceImage.dataBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const ext = sourceImage.mimeType === "image/jpeg" ? "jpg" : sourceImage.mimeType === "image/webp" ? "webp" : "png";
+    const form = new FormData();
+    form.set("model", model);
+    form.set("prompt", promptText);
+    form.set("n", "1");
+    form.set("size", "1024x1024");
+    form.set("response_format", "b64_json");
+    form.set("image", new File([bytes], `source.${ext}`, { type: sourceImage.mimeType }));
+    const res = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal,
+    });
+    if (!res.ok) throw await providerFailure("OpenAI", res);
+    const body = (await res.json()) as { data?: { b64_json?: string; revised_prompt?: string }[] };
+    const item = body.data?.[0];
+    if (!item?.b64_json) {
+      throw new ProviderError("OpenAI did not return an image. Try rephrasing the prompt or switching models.");
+    }
+    return { mimeType: "image/png", dataBase64: item.b64_json, caption: item.revised_prompt?.trim() || undefined };
+  }
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
-      prompt: parts.join("\n\n"),
+      prompt: promptText,
       size: resolveOpenAiImageSize(model, aspectRatio),
       response_format: "b64_json",
       n: 1,
@@ -461,6 +556,10 @@ llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), asyn
   const input = c.req.valid("json");
   const s = await loadSettings(c.env, c.get("user").id);
   const provider = getImageModelProvider(s.imageModel);
+  const modelMeta = findImageModel(s.imageModel);
+  if (input.sourceImage && modelMeta && !modelMeta.supportsImageInput) {
+    return c.json({ error: "image_input_unsupported" }, 400);
+  }
   const apiKey = s.keys[provider]?.trim();
   if (!apiKey) return c.json({ error: `no_${provider}_key` }, 400);
 
@@ -475,6 +574,7 @@ llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), asyn
             s.imageAspectRatio,
             input.prompt,
             input.context,
+            input.sourceImage,
             upstream.signal,
           )
         : await generateGeminiImage(
@@ -483,12 +583,13 @@ llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), asyn
             s.imageAspectRatio,
             input.prompt,
             input.context,
+            input.sourceImage,
             upstream.signal,
           );
     return c.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Image generation failed.";
-    const status = err instanceof ProviderError && message.includes("rate") ? 429 : 502;
+    const status = message === "image_input_unsupported" ? 400 : err instanceof ProviderError && message.includes("rate") ? 429 : 502;
     return c.json({ error: message }, status);
   }
 });
@@ -496,6 +597,9 @@ llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), asyn
 llmRoutes.post("/generate", zValidator("json", generateSchema), async (c) => {
   const input = c.req.valid("json");
   const s = await loadSettings(c.env, c.get("user").id);
+  if (thinkingControlFor(s.activeProvider, s.model) === "always-on") {
+    return c.json({ error: "thinking_required" }, 400);
+  }
   const apiKey = s.keys[s.activeProvider]?.trim();
   if (!apiKey) return c.json({ error: "no_api_key" }, 400);
 

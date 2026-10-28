@@ -28,7 +28,9 @@ import {
 } from "lucide-react";
 import { observer } from "mobx-react-lite";
 import { toast } from "sonner";
-import { AI_BAR_PORTAL_ATTR, AiModelSelect } from "@/components/ai/AiModelSelect";
+import { AI_BAR_PORTAL_ATTR } from "@/components/ai/AiModelSelect";
+import { AiImageModelSelect } from "@/components/ai/AiImageModelSelect";
+import { AiModelSelect } from "@/components/ai/AiModelSelect";
 import {
   aiAnchorBottom,
   aiHasSelection,
@@ -40,10 +42,6 @@ import {
   type AiTarget,
 } from "@/lib/ai-editor";
 import { aiErrorMessage, generateAi, type AiTurn } from "@/lib/ai-generate";
-import { aiImageErrorMessage, base64ToBlob, generateAiImage } from "@/lib/ai-image-generate";
-import { insertGeneratedImageAtTarget } from "@/lib/ai-image-insert";
-import { looksLikeImageRequest, normalizeImagePrompt } from "@/lib/ai-image-intent";
-import type { ImageOptimizationSettings } from "@/lib/image-settings";
 import { findImageModel } from "@shared/llm";
 import { cn } from "@/lib/utils";
 import {
@@ -52,9 +50,11 @@ import {
   translationInstruction,
 } from "@/lib/languages";
 import { llmStore } from "@/stores/llm-store";
+import { aiStore } from "@/stores/ai-store";
 import { uiPreferenceStore } from "@/stores/ui-preference-store";
+import type { ImageOptimizationSettings } from "@/lib/image-settings";
 
-type Phase = "idle" | "streaming" | "generating-image" | "image-done" | "done" | "error";
+type Phase = "idle" | "streaming" | "done" | "error";
 
 const GENERATE_IMAGE_INSTRUCTION = "__generate_image__";
 
@@ -128,6 +128,7 @@ export const AiPromptBar = observer(function AiPromptBar({
   target,
   containerRef,
   workspaceId,
+  noteId,
   notePath,
   imageSettings,
   onClose,
@@ -138,6 +139,7 @@ export const AiPromptBar = observer(function AiPromptBar({
   target: AiTarget;
   containerRef: RefObject<HTMLDivElement | null>;
   workspaceId: string;
+  noteId: string;
   notePath: string;
   imageSettings: ImageOptimizationSettings;
   /** `restore` puts the original selection back (dismiss); false leaves the cursor where it is. */
@@ -162,12 +164,11 @@ export const AiPromptBar = observer(function AiPromptBar({
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
   const outputTextRef = useRef("");
-  const imageBlobRef = useRef<Blob | null>(null);
-  const lastImagePromptRef = useRef<string | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-  const [imageCaption, setImageCaption] = useState<string | null>(null);
 
   const hasSelection = aiHasSelection(target);
+  const mode = aiStore.mode;
+  const imageMode = mode.kind === "image";
+  const imageSource = mode.kind === "image" ? mode.source : null;
   const translateTarget = uiPreferenceStore.aiTranslateTarget;
   const translateTargetName = getLanguageName(translateTarget);
 
@@ -180,6 +181,19 @@ export const AiPromptBar = observer(function AiPromptBar({
     void llmStore.ensureLoaded();
   }, []);
 
+  useLayoutEffect(() => {
+    if (target.kind !== "image") return;
+    void aiStore.attachSource({
+      blockId: target.blockId,
+      url: target.url,
+      name: target.name,
+      workspaceId,
+      notePath,
+    });
+  }, [notePath, target, workspaceId]);
+
+  useEffect(() => () => aiStore.exitImageMode(), []);
+
   useEffect(() => showAiHighlight(editor, target), [editor, target]);
 
   // Take focus first: once the editor is blurred, collapsing its selection (which
@@ -190,21 +204,6 @@ export const AiPromptBar = observer(function AiPromptBar({
   }, [editor, target]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
-
-  useEffect(() => {
-    return () => {
-      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
-    };
-  }, [imagePreviewUrl]);
-
-  const clearImagePreview = useCallback(() => {
-    setImagePreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    imageBlobRef.current = null;
-    setImageCaption(null);
-  }, []);
 
   const reposition = useCallback(() => {
     const container = containerRef.current;
@@ -239,7 +238,6 @@ export const AiPromptBar = observer(function AiPromptBar({
       if (!node || wrapperRef.current?.contains(node) || node.closest(`[${AI_BAR_PORTAL_ATTR}]`)) return;
       // Keep a response around until it is accepted or discarded on purpose.
       if (phaseRef.current === "idle" || phaseRef.current === "error") onClose(false);
-      if (phaseRef.current === "image-done") onClose(false);
     };
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
@@ -285,54 +283,7 @@ export const AiPromptBar = observer(function AiPromptBar({
     [target],
   );
 
-  const runImage = useCallback(
-    async (prompt: string) => {
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
-      setValue("");
-      setError(null);
-      setOutput("");
-      clearImagePreview();
-      setPhase("generating-image");
-      setActiveIndex(0);
-      lastImagePromptRef.current = prompt;
-      try {
-        const ctx = aiRequestContext(target);
-        const context =
-          ctx.selection?.markdown ?? ctx.cursorBlock ?? ctx.document?.slice(0, 80_000);
-        const result = await generateAiImage({ prompt, context }, controller.signal);
-        if (abortRef.current !== controller) return;
-        const blob = base64ToBlob(result.dataBase64, result.mimeType);
-        imageBlobRef.current = blob;
-        setImagePreviewUrl(URL.createObjectURL(blob));
-        setImageCaption(result.caption ?? null);
-        setPhase("image-done");
-      } catch (err) {
-        if (abortRef.current !== controller) return;
-        if (controller.signal.aborted) {
-          setPhase("idle");
-          return;
-        }
-        setError(aiImageErrorMessage(err));
-        setPhase("error");
-      }
-    },
-    [clearImagePreview, target],
-  );
-
   const stop = useCallback(() => abortRef.current?.abort(), []);
-
-  const insertImage = useCallback(async () => {
-    const blob = imageBlobRef.current;
-    if (!blob) return;
-    try {
-      await insertGeneratedImageAtTarget(editor, target, workspaceId, notePath, blob, imageSettings);
-      onClose(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not insert the image");
-    }
-  }, [editor, imageSettings, notePath, onClose, target, workspaceId]);
 
   const apply = useCallback(
     async (mode: AiApplyMode) => {
@@ -359,25 +310,50 @@ export const AiPromptBar = observer(function AiPromptBar({
   const submit = useCallback(
     (instruction: string) => {
       const trimmed = instruction.trim();
-      const fromInput = value.trim();
-      const wantsImage =
-        instruction === GENERATE_IMAGE_INSTRUCTION ||
-        looksLikeImageRequest(trimmed) ||
-        (phase === "image-done" && Boolean(fromInput || instruction === GENERATE_IMAGE_INSTRUCTION));
-      if (wantsImage) {
-        const prompt =
-          instruction === GENERATE_IMAGE_INSTRUCTION
-            ? fromInput || "An illustration that fits this note"
-            : normalizeImagePrompt(trimmed || fromInput);
+      if (aiStore.mode.kind === "image") {
+        const prompt = trimmed || value.trim();
         if (!prompt) return;
-        void runImage(prompt);
+        if (aiStore.mode.sourceState === "loading") return;
+        if (aiStore.mode.sourceState === "error") {
+          setError(aiStore.mode.sourceError ?? "Could not load this image.");
+          setPhase("error");
+          return;
+        }
+        if (!llmStore.imageReady) {
+          setError("Add an API key for the image model in Settings → AI Image.");
+          setPhase("error");
+          return;
+        }
+        const modelId = llmStore.settings?.imageModel ?? "";
+        if (aiStore.mode.source && !findImageModel(modelId)?.supportsImageInput) {
+          setError("This image model can't edit an existing image. Switch to a Gemini image model.");
+          setPhase("error");
+          return;
+        }
+        try {
+          aiStore.startImageJob({
+            editor,
+            target,
+            noteId,
+            workspaceId,
+            notePath,
+            imageSettings,
+            prompt,
+            model: modelId,
+          });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Could not start image generation.");
+          setPhase("error");
+          return;
+        }
+        onClose(false);
         return;
       }
       if (!trimmed) return;
       lastInstructionRef.current = trimmed;
       void run(trimmed, phase === "done" ? turns : []);
     },
-    [phase, run, runImage, turns, value],
+    [editor, imageSettings, noteId, notePath, onClose, phase, run, target, turns, value, workspaceId],
   );
 
   const selectLanguageAndRun = useCallback(
@@ -396,31 +372,8 @@ export const AiPromptBar = observer(function AiPromptBar({
   }, [languageSubmenu, translateTarget]);
 
   const menu: MenuItem[] = useMemo(() => {
-    if (phase === "streaming" || phase === "generating-image") return [];
-    if (phase === "image-done") {
-      return [
-        { id: "insert", label: "Insert", icon: Check, run: () => void insertImage() },
-        {
-          id: "retry",
-          label: "Try again",
-          icon: RotateCcw,
-          run: () => {
-            const prompt = lastImagePromptRef.current;
-            if (prompt) void runImage(prompt);
-          },
-        },
-        {
-          id: "discard",
-          label: "Discard",
-          icon: X,
-          run: () => {
-            clearImagePreview();
-            onClose(true);
-          },
-          danger: true,
-        },
-      ];
-    }
+    if (phase === "streaming") return [];
+    if (aiStore.mode.kind === "image" && phase !== "error") return [];
     if (phase === "done") {
       const items: MenuItem[] = [
         {
@@ -439,13 +392,10 @@ export const AiPromptBar = observer(function AiPromptBar({
     }
     if (phase === "error") {
       const items: MenuItem[] = [];
-      if (lastImagePromptRef.current) {
-        items.push({
-          id: "retry-image",
-          label: "Try again",
-          icon: RotateCcw,
-          run: () => void runImage(lastImagePromptRef.current!),
-        });
+      if (aiStore.mode.kind === "image") {
+        if (!llmStore.imageReady) {
+          items.push({ id: "image-settings", label: "Open AI Image settings", icon: Settings, run: onOpenImageSettings });
+        }
       } else if (lastInstructionRef.current) {
         items.push({
           id: "retry",
@@ -453,11 +403,9 @@ export const AiPromptBar = observer(function AiPromptBar({
           icon: RotateCcw,
           run: () => void run(lastInstructionRef.current!, turns),
         });
-      }
-      if (!llmStore.imageReady && lastImagePromptRef.current) {
-        items.push({ id: "image-settings", label: "Open AI Image settings", icon: Settings, run: onOpenImageSettings });
-      } else if (!llmStore.ready) {
-        items.push({ id: "settings", label: "Open AI settings", icon: Settings, run: onOpenSettings });
+        if (!llmStore.ready) {
+          items.push({ id: "settings", label: "Open AI settings", icon: Settings, run: onOpenSettings });
+        }
       }
       items.push({ id: "discard", label: "Close", icon: X, run: () => onClose(true) });
       return items;
@@ -486,31 +434,39 @@ export const AiPromptBar = observer(function AiPromptBar({
       id: p.label,
       label: p.label,
       icon: p.icon,
-      run: () => submit(p.instruction),
+      run: () => {
+        if (p.instruction === GENERATE_IMAGE_INSTRUCTION) {
+          aiStore.enterImageMode();
+          setValue("");
+          setActiveIndex(-1);
+          return;
+        }
+        submit(p.instruction);
+      },
     }));
   }, [
     apply,
-    clearImagePreview,
     hasSelection,
-    insertImage,
     onClose,
     onOpenImageSettings,
     onOpenSettings,
     phase,
     retry,
     run,
-    runImage,
     selectLanguageAndRun,
     submit,
     translateTarget,
     translateTargetName,
     turns,
     value,
+    imageMode,
+    llmStore.imageReady,
+    llmStore.ready,
   ]);
 
   // Each phase brings a new menu; start on its first item unless the user is typing.
   useEffect(() => {
-    setActiveIndex(phase === "streaming" || phase === "generating-image" || inputRef.current?.value.trim() ? -1 : 0);
+    setActiveIndex(phase === "streaming" || inputRef.current?.value.trim() ? -1 : 0);
   }, [phase]);
 
   useEffect(() => {
@@ -534,7 +490,8 @@ export const AiPromptBar = observer(function AiPromptBar({
         setSubmenuOpen(false);
         return;
       }
-      if (phase === "streaming" || phase === "generating-image") stop();
+      if (phase === "streaming") stop();
+      else if (imageMode && target.kind !== "image" && phase === "idle") aiStore.exitImageMode();
       else onClose(true);
       return;
     }
@@ -577,7 +534,7 @@ export const AiPromptBar = observer(function AiPromptBar({
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (phase === "streaming" || phase === "generating-image") return;
+      if (phase === "streaming") return;
       const item = activeIndex >= 0 ? menu[activeIndex] : null;
       if (item?.hasSubmenu) {
         if (submenuOpen && languageSubmenu[subActiveIndex]) {
@@ -593,21 +550,18 @@ export const AiPromptBar = observer(function AiPromptBar({
     }
   };
 
-  const placeholder =
-    phase === "image-done"
-      ? "Describe changes for a new image…"
-      : phase === "done"
-        ? "Tell AI what to change next…"
-        : hasSelection
-          ? "Edit with AI"
-          : "Ask AI to write anything…";
-  const showOutput =
-    phase === "streaming" ||
-    phase === "generating-image" ||
-    phase === "image-done" ||
-    phase === "done" ||
-    (phase === "error" && (output || imagePreviewUrl));
-  const imageModelLabel = findImageModel(llmStore.settings?.imageModel ?? "")?.label ?? "Image model";
+  const placeholder = imageMode
+    ? imageSource
+      ? "Describe how to change this image…"
+      : "Describe an image…"
+    : phase === "done"
+      ? "Tell AI what to change next…"
+      : hasSelection
+        ? "Edit with AI"
+        : "Ask AI to write anything…";
+  const showOutput = phase === "streaming" || phase === "done" || (phase === "error" && Boolean(output));
+  const sourceState = aiStore.mode.kind === "image" ? aiStore.mode.sourceState : "idle";
+  const sendDisabled = !value.trim() || sourceState === "loading";
 
   return (
     <div
@@ -622,30 +576,51 @@ export const AiPromptBar = observer(function AiPromptBar({
             ref={outputRef}
             className="max-h-[45vh] overflow-y-auto border-b border-divider px-4 py-3 text-[15px] leading-relaxed whitespace-pre-wrap text-ink"
           >
-            {phase === "image-done" && imagePreviewUrl ? (
-              <div className="flex flex-col gap-2">
-                <img src={imagePreviewUrl} alt="Generated preview" className="max-h-[40vh] w-full rounded-lg object-contain" />
-                {imageCaption ? <p className="text-sm text-dim">{imageCaption}</p> : null}
-              </div>
-            ) : phase === "generating-image" ? (
+            {output || (
               <span className="inline-flex items-center gap-1.5 text-sm text-dim">
-                <ImageIcon className="size-3.5 animate-pulse text-accent-color" />
-                Generating image with {imageModelLabel}…
+                <Sparkles className="size-3.5 animate-pulse text-accent-color" />
+                AI is writing…
               </span>
-            ) : (
-              output || (
-                <span className="inline-flex items-center gap-1.5 text-sm text-dim">
-                  <Sparkles className="size-3.5 animate-pulse text-accent-color" />
-                  AI is writing…
-                </span>
-              )
             )}
+          </div>
+        ) : null}
+        {imageMode ? (
+          <div className="flex items-center gap-2 border-b border-divider px-3 py-2">
+            {imageSource ? (
+              <span className="flex min-w-0 items-center gap-1.5 rounded-md border border-divider bg-panel py-0.5 pr-1 pl-1">
+                <img src={imageSource.previewUrl} alt="" className="size-6 rounded object-cover" />
+                <span className="max-w-[10rem] truncate text-xs text-dim">{imageSource.name}</span>
+                <button
+                  type="button"
+                  onClick={() => aiStore.clearSource()}
+                  className="flex size-4 items-center justify-center text-dim hover:text-ink"
+                  title="Don't use this image as input"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ) : sourceState === "loading" ? (
+              <span className="text-xs text-dim">Loading image…</span>
+            ) : sourceState === "error" ? (
+              <span className="min-w-0 truncate text-xs text-danger">{aiStore.mode.kind === "image" ? aiStore.mode.sourceError : ""}</span>
+            ) : (
+              <span className="text-xs font-medium text-dim">Image</span>
+            )}
+            {target.kind !== "image" ? (
+              <button
+                type="button"
+                onClick={() => aiStore.exitImageMode()}
+                className="ml-auto text-xs text-dim hover:text-ink"
+              >
+                Text
+              </button>
+            ) : null}
           </div>
         ) : null}
         <div className="flex items-center gap-2 py-2 pr-2 pl-2.5">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-full border border-divider bg-panel">
-            {phase === "generating-image" || phase === "image-done" ? (
-              <ImageIcon className={cn("size-4 text-accent-color", phase === "generating-image" && "animate-pulse")} />
+            {imageMode ? (
+              <ImageIcon className="size-4 text-accent-color" />
             ) : (
               <Sparkles className={cn("size-4 text-accent-color", phase === "streaming" && "animate-pulse")} />
             )}
@@ -656,25 +631,21 @@ export const AiPromptBar = observer(function AiPromptBar({
             onChange={(e) => {
               setValue(e.target.value);
               setSubmenuOpen(false);
-              setActiveIndex(e.target.value.trim() ? -1 : 0);
+              setActiveIndex(e.target.value.trim() || imageMode ? -1 : 0);
             }}
             onKeyDown={onKeyDown}
-            placeholder={
-              phase === "streaming"
-                ? "AI is writing…"
-                : phase === "generating-image"
-                  ? "Generating image…"
-                  : placeholder
-            }
-            // Read-only rather than disabled, so it keeps focus and Esc can stop the run.
-            readOnly={phase === "streaming" || phase === "generating-image"}
+            placeholder={phase === "streaming" ? "AI is writing…" : placeholder}
+            readOnly={phase === "streaming"}
             className="min-w-0 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-dim read-only:cursor-default"
             aria-label="Instruction for AI"
           />
-          {phase === "generating-image" || phase === "image-done" ? (
-            <span className="max-w-[9rem] truncate px-1 text-xs text-dim" title={imageModelLabel}>
-              {imageModelLabel}
-            </span>
+          {imageMode ? (
+            <AiImageModelSelect
+              requireImageInput={Boolean(imageSource)}
+              disabled={phase === "streaming"}
+              onOpenSettings={onOpenImageSettings}
+              onAfterClose={() => inputRef.current?.focus()}
+            />
           ) : (
             <AiModelSelect
               disabled={phase === "streaming"}
@@ -682,7 +653,7 @@ export const AiPromptBar = observer(function AiPromptBar({
               onAfterClose={() => inputRef.current?.focus()}
             />
           )}
-          {phase === "streaming" || phase === "generating-image" ? (
+          {phase === "streaming" ? (
             <button
               type="button"
               onClick={stop}
@@ -695,7 +666,7 @@ export const AiPromptBar = observer(function AiPromptBar({
             <button
               type="button"
               onClick={() => submit(value)}
-              disabled={!value.trim() && phase !== "image-done"}
+              disabled={sendDisabled}
               className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent-color text-white hover:bg-accent-hover disabled:bg-raised disabled:text-dim"
               title="Send (Enter)"
             >
