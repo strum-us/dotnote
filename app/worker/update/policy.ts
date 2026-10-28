@@ -11,14 +11,9 @@ import type { ReleaseManifest } from "./release-client";
 /** Enough to read the script's settings, upload files, and replace the script. */
 export const REQUIRED_SCOPES = ["workers-scripts.read", "workers-scripts.write"];
 
-/**
- * How this Dotnote reaches the Cloudflare API to replace itself: the OAuth
- * grant the installer handed over, or an API token the owner stored as the
- * CF_API_TOKEN secret. A stored token wins: the owner added it later, usually
- * because there is no grant or it stopped working.
- */
+/** How this Dotnote reaches the Cloudflare API to replace itself: the OAuth grant the installer handed over. */
 export type UpdateAccess = {
-  credential: "grant" | "token" | null;
+  credential: "grant" | null;
   accountId: string | null;
   scriptName: string | null;
   connection: CloudflareConnection;
@@ -29,7 +24,6 @@ type PolicyEnv = Pick<Env, "DOTNOTE_DEV" | "INSTALLER_ORIGIN" | "WORKER_NAME" | 
 export function blockedReason(env: PolicyEnv, access: UpdateAccess): UpdateBlockedReason | null {
   if (env.DOTNOTE_DEV === "1") return "development";
   if (!env.INSTALLER_ORIGIN?.trim()) return "no_installer";
-  if (access.credential === "token") return access.accountId && access.scriptName ? null : "unconfigured";
   if (!env.WORKER_NAME?.trim() || !env.CF_OAUTH_CLIENT_ID || !env.CF_GRANT_KEY) return "unconfigured";
   if (!access.connection.connected) return "not_connected";
   if (!REQUIRED_SCOPES.every((scope) => access.connection.scopes.includes(scope))) return "missing_scopes";

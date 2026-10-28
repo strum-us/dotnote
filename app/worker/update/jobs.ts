@@ -45,13 +45,12 @@ const MAX_INTERRUPTED = 3;
 const MIGRATIONS_PER_STEP = 5;
 
 /**
- * Installer-written secrets, and the API token an owner may store instead of
- * a grant. `keep_bindings` carries them across the upload; if one is missing
- * afterwards it is put back from this isolate's env, which still holds the
- * values. CF_GRANT_KEY is never regenerated: a new key could not decrypt the
- * stored Cloudflare grant.
+ * Installer-written secrets. `keep_bindings` carries them across the upload;
+ * if one is missing afterwards it is put back from this isolate's env, which
+ * still holds the values. CF_GRANT_KEY is never regenerated: a new key could
+ * not decrypt the stored Cloudflare grant.
  */
-const KEPT_SECRETS = ["CF_GRANT_KEY", "DOTNOTE_HANDOFF", "DOTNOTE_DIAGNOSTICS_TOKEN", "CF_API_TOKEN"] as const;
+const KEPT_SECRETS = ["CF_GRANT_KEY", "DOTNOTE_HANDOFF", "DOTNOTE_DIAGNOSTICS_TOKEN"] as const;
 const SECRET_TYPES = new Set(["secret_text", "secret_key"]);
 /** Bindings that point at extra module parts. The upload only sends index.js, so these cannot be carried. */
 const PART_BINDING_TYPES = new Set(["wasm_module", "text_blob", "data_blob"]);

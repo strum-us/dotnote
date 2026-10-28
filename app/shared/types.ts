@@ -94,11 +94,6 @@ export type CloudflareStatusResponse = {
     scopes: string[];
     updatedAt: string | null;
   };
-  /**
-   * An API token stored as the CF_API_TOKEN secret, for updates without an installer grant.
-   * Missing from Workers before 0.2.4.
-   */
-  apiToken?: { stored: boolean; accountId: string | null; workerName: string | null };
   installerOrigin: string | null;
   links: {
     workerDashboard: string;
@@ -191,8 +186,8 @@ export type UpdateCheckResponse = {
   /** The installer could not be reached or sent no usable release. */
   error: string | null;
   job: UpdateJobView | null;
-  /** What this instance replaces itself with: the installer's grant or a stored API token. Missing before 0.2.4. */
-  credential?: "grant" | "token" | null;
+  /** What this instance replaces itself with: the installer's grant. Missing before 0.2.4. */
+  credential?: "grant" | null;
   /** The owner turned on automatic updates (a Cron Trigger every 30 minutes). Missing before 0.2.4. */
   autoUpdate?: boolean;
 };

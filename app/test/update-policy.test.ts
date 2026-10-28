@@ -37,16 +37,8 @@ test("a grant without the Worker scopes is missing_scopes", () => {
   assert.equal(blockedReason(installed, narrow), "missing_scopes");
 });
 
-test("a wrangler deploy is unconfigured until it holds an API token", () => {
-  const wrangler = { INSTALLER_ORIGIN: installed.INSTALLER_ORIGIN, WORKER_NAME: "dotnote" };
-  assert.equal(blockedReason(wrangler, none), "unconfigured");
-  const token: UpdateAccess = { ...none, credential: "token", accountId: "acc" };
-  assert.equal(blockedReason(wrangler, token), null);
-  assert.equal(blockedReason(wrangler, { ...token, accountId: null }), "unconfigured");
-});
-
-test("a token also unblocks an installer deploy with no grant", () => {
-  assert.equal(blockedReason(installed, { ...none, credential: "token", accountId: "acc" }), null);
+test("a wrangler deploy is unconfigured until the installer repairs it", () => {
+  assert.equal(blockedReason({ INSTALLER_ORIGIN: installed.INSTALLER_ORIGIN, WORKER_NAME: "dotnote" }, none), "unconfigured");
 });
 
 test("local development and a missing installer always block", () => {

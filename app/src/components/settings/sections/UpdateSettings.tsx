@@ -47,7 +47,7 @@ export const UpdateSettings = observer(function UpdateSettings() {
   const running = job?.status === "running";
   const blocked = check?.blockedReason ?? null;
   const needsReconnect = blocked === "missing_scopes" || blocked === "not_connected";
-  const tokenHelps = blocked === "unconfigured" || blocked === "not_connected";
+  const needsInstaller = blocked === "unconfigured";
   const workerVersion = updateStore.currentVersion ?? check?.currentVersion ?? "…";
 
   return (
@@ -143,13 +143,9 @@ export const UpdateSettings = observer(function UpdateSettings() {
                 Reconnect Cloudflare
               </Button>
             ) : null}
-            {tokenHelps ? (
-              <Button
-                size="sm"
-                variant={needsReconnect ? "outline" : "default"}
-                onClick={() => openSettingsSection("cloudflare")}
-              >
-                Use an API token…
+            {needsInstaller ? (
+              <Button size="sm" onClick={() => openSettingsSection("cloudflare")}>
+                Connect from the installer…
               </Button>
             ) : null}
             {updateStore.phase === "done" ? (
@@ -200,11 +196,9 @@ export const UpdateSettings = observer(function UpdateSettings() {
         <CardHeader>
           <CardTitle>Automatic updates</CardTitle>
           <CardDescription>
-            {check?.credential === "token"
-              ? "Uses the API token stored on this Worker."
-              : check?.credential === "grant"
-                ? "Uses the Cloudflare permission this Dotnote stored at install."
-                : "Needs a Cloudflare permission or API token first."}
+            {check?.credential === "grant"
+              ? "Uses the Cloudflare permission this Dotnote stored at install."
+              : "Needs the Cloudflare permission from the installer first."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">

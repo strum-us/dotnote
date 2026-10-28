@@ -166,12 +166,6 @@ export const cloudflareApi = {
       method: "POST",
     }),
   usage: () => request<R2UsageResponse>("/api/cloudflare/usage"),
-  saveToken: (payload: { token: string; accountId?: string; workerName?: string }) =>
-    request<{ ok: true; accountId: string; workerName: string }>("/api/cloudflare/token", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-  removeToken: () => request<{ ok: true }>("/api/cloudflare/token", { method: "DELETE" }),
   copyBatch: (payload: {
     accountId: string;
     bucketName: string;

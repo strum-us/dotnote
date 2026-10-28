@@ -26,9 +26,8 @@ export const BLOCKED_COPY: Record<UpdateBlockedReason, string> = {
   development: "Updates are off in local development.",
   no_installer: "This Dotnote has no installer address, so it cannot fetch releases.",
   unconfigured:
-    "This Dotnote was not deployed by the installer. Give it a Cloudflare API token in Settings › Cloudflare once, and it updates itself from then on.",
-  not_connected:
-    "Connect Cloudflare, or give this Dotnote an API token in Settings › Cloudflare, to let it update itself.",
+    "This Dotnote was not deployed by the installer. Run the installer once for this Worker (repair keeps your notes) and it updates itself from then on.",
+  not_connected: "Connect Cloudflare to let this Dotnote update itself.",
   missing_scopes: "The stored Cloudflare permission cannot replace the Worker. Reconnect Cloudflare to allow updates.",
 };
 

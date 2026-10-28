@@ -1,6 +1,6 @@
 # Self-update
 
-A Dotnote updates itself. The "worker" here is the user's **Cloudflare Worker script**, not a Service Worker. Nothing new is installed for this: the app Worker uses a Cloudflare credential it was given once — the permission it stored at install (`cf_grant`, renewed with `mintAccessToken()`), or an API token the owner stored on it (see [Credentials](#credentials)) — fetches the newest signed release from the installer, applies its migrations to its own D1, uploads its files, and replaces its own script. No one signs in to Cloudflare again for an update. The sidebar banner and **Settings › Updates** only show what the Worker is doing; with [automatic updates](#automatic-updates) on, a Cron Trigger runs it with no tab open.
+A Dotnote updates itself. The "worker" here is the user's **Cloudflare Worker script**, not a Service Worker. Nothing new is installed for this: the app Worker uses the Cloudflare permission it was given once at install (`cf_grant`, renewed with `mintAccessToken()`, see [The grant](#the-grant)), fetches the newest signed release from the installer, applies its migrations to its own D1, uploads its files, and replaces its own script. No one signs in to Cloudflare again for an update. The sidebar banner and **Settings › Updates** only show what the Worker is doing; with [automatic updates](#automatic-updates) on, a Cron Trigger runs it with no tab open.
 
 ```
 sidebar (updateStore)        Dotnote Worker (old)          installer           Cloudflare API     Dotnote Worker (new)
@@ -59,7 +59,7 @@ Migrations run before the new code is uploaded, so they must only add and must b
 | `migrate` | Pending files, up to five per request, through the app's own `DB` binding | `migrate` |
 | `assets` | Open an asset upload session for the release's files | `assets` |
 | `upload` | One bucket of files per request; each file's SHA-256 must match its name in the signed manifest | `assets` |
-| `deploy` | Download `worker.js` and check its hash, then `PUT` the script with the current bindings (from the settings API), a fresh `APP_VERSION`, and `keep_bindings` for secrets. Missing secrets (including `CF_API_TOKEN`) are put back from the old Worker's env, and the update Cron Trigger is added if the Worker has none | `worker`, `secrets` |
+| `deploy` | Download `worker.js` and check its hash, then `PUT` the script with the current bindings (from the settings API), a fresh `APP_VERSION`, and `keep_bindings` for secrets. Missing secrets are put back from the old Worker's env, and the update Cron Trigger is added if the Worker has none | `worker`, `secrets` |
 | `verify` | Passes only when answered by the new code: D1 and R2 probes, then `app_meta.version` | `prove` |
 
 `d1`, `r2`, `secrets` and `address` are not repeated. The updater never generates a new `CF_GRANT_KEY`: a new key could not decrypt the stored grant.
@@ -68,33 +68,29 @@ If the old version still answers 90 seconds after the upload, the job fails with
 
 ## Who can update
 
-`GET /api/update/check` reports `canUpdate`, a `blockedReason`, and the `credential` in use (`grant`, `token`, or none). The rules are in `app/worker/update/policy.ts`:
+`GET /api/update/check` reports `canUpdate`, a `blockedReason`, and whether a grant is in place (`credential`). The rules are in `app/worker/update/policy.ts`:
 
 | Reason | Meaning |
 |---|---|
 | `development` | `DOTNOTE_DEV=1`: never redeploy from local dev |
 | `no_installer` | No `INSTALLER_ORIGIN`, so there is nowhere to fetch releases from |
-| `unconfigured` | No API token, and no `WORKER_NAME`, OAuth client id, or grant key: deployed with wrangler. Store an API token once to fix it |
-| `not_connected` | No API token and no stored Cloudflare grant: an install whose handoff never landed. Finish it from the installer, reconnect, or store an API token |
+| `unconfigured` | No `WORKER_NAME`, OAuth client id, or grant key: deployed with wrangler. Run the installer once in repair mode for this Worker |
+| `not_connected` | No stored Cloudflare grant: an install whose handoff never landed. Finish it from the installer or reconnect |
 | `missing_scopes` | The grant lacks `workers-scripts.read` or `workers-scripts.write`. The banner offers **Reconnect** |
 
 `/api/update/*` stays behind the Dotnote login. "No sign-in" means no Cloudflare sign-in per update, never an open endpoint: whoever can call these routes can replace the Worker.
 
 The page will not start an update while it has unsynced changes or an import is running. The cron run cannot see the browser, so it does not wait for that; queued edits sync to the new version afterwards.
 
-## Credentials
+## The grant
 
-The Worker needs one credential that can replace its own script. It is given once and kept; every update after that runs on it.
-
-**Installer grant.** The installer deploys the Worker with `CF_GRANT_KEY` (AES-GCM key, secret) and `CF_OAUTH_CLIENT_ID`. The browser that ran the install then proves the new Worker answers (`/api/install/prove`) and hands it the OAuth refresh token directly (`/api/install/handoff`); the installer never holds it. The Worker exchanges it at once, so the browser's copy stops working, and keeps the rotated refresh token encrypted in `cf_grant`.
+The Worker needs one credential that can replace its own script: the OAuth grant. It is given once and kept; every update after that runs on it, with no API token anywhere. The installer deploys the Worker with `CF_GRANT_KEY` (AES-GCM key, secret) and `CF_OAUTH_CLIENT_ID`. The browser that ran the install then proves the new Worker answers (`/api/install/prove`) and hands it the OAuth refresh token directly (`/api/install/handoff`); the installer never holds it. The Worker exchanges it at once, so the browser's copy stops working, and keeps the rotated refresh token encrypted in `cf_grant`.
 
 The handoff is what finishes an install. Until it lands, the installer keeps the installation row (status `ready`) and lists it as unfinished:
 
 - **Continue** in the browser that started it, or **Continue here** in any other: `POST /api/installations/:id/resume` (Cloudflare access to the account is enough, like **Remove**) issues a new browser key and puts a new `DOTNOTE_HANDOFF` hash on the Worker, so the new browser's setup code is the one accepted.
 - The Worker records which `DOTNOTE_HANDOFF` hash it consumed (`install_state.handoff_done`). A new hash from **Continue here**, an installer update, or a repair hands over once more. A consumed code is ignored only while a readable grant exists, so a stuck install can always finish.
-- Installer **update** and **repair** add a `CF_GRANT_KEY` only when the Worker's secret list lacks one (a wrangler deploy): replacing an existing key would make the stored grant undecryptable. They also add `WORKER_NAME`, `CF_ACCOUNT_ID`, `CF_OAUTH_CLIENT_ID`, and `INSTALLER_ORIGIN` when the Worker lacks them, and keep the existing values otherwise.
-
-**API token.** For a Dotnote deployed with wrangler, or one whose grant is gone, the owner pastes a Cloudflare API token with **Account › Workers Scripts › Edit** in **Settings › Cloudflare** (`POST /api/cloudflare/token`, `app/worker/update/api-token.ts`). The Worker checks that the token opens a script with its name in an account the token can see, and that the script's D1 and R2 bindings and plain-text vars match its own env (and the `workers.dev` host, if it has one), so it lands on this Dotnote and not another. Then the token stores itself on that script as the `CF_API_TOKEN` secret; the account id and Worker name go to `app_meta`. The Worker keeps no other copy and never returns it. Cloudflare redeploys the Worker to add the secret; the page waits until a request sees it. **Remove token** deletes the secret with the token itself. A stored token wins over a grant. Wrangler users can also run `wrangler secret put CF_API_TOKEN`; the Worker then uses `CF_ACCOUNT_ID` and `WORKER_NAME` from its vars.
+- Installer **update** and **repair** add a `CF_GRANT_KEY` only when the Worker's secret list lacks one (a wrangler deploy): replacing an existing key would make the stored grant undecryptable. They also add `WORKER_NAME`, `CF_ACCOUNT_ID`, `CF_OAUTH_CLIENT_ID`, and `INSTALLER_ORIGIN` when the Worker lacks them, and keep the existing values otherwise. That is how a wrangler deploy gets a grant. Keep those vars in its `wrangler.jsonc`, or the next `wrangler deploy` drops them; the secret survives it.
 
 ## Automatic updates
 

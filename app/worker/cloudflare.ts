@@ -5,8 +5,6 @@ import type { Env } from "./env";
 import type { AppVariables } from "./session";
 import { issueReconnectCode, mintAccessToken, readConnection } from "./cf-grant";
 import { putObjectToR2S3, type R2Dest } from "./r2-s3";
-import { readUpdateAccess } from "./update/access";
-import { removeApiToken, storeApiToken, TokenRejected } from "./update/api-token";
 
 const COPY_BATCH_LIMIT = 40;
 
@@ -54,7 +52,7 @@ cloudflareRoutes.get("/status", async (c) => {
   const origin = new URL(c.req.url).origin;
   const envLabel = c.env.DOTNOTE_DEV === "1" ? "development" : "production";
 
-  const [r2Probe, d1Probe, connection, access] = await Promise.all([
+  const [r2Probe, d1Probe, connection] = await Promise.all([
     probeLatency(async () => {
       await c.env.BUCKET.list({ limit: 1 });
     }),
@@ -62,7 +60,6 @@ cloudflareRoutes.get("/status", async (c) => {
       await c.env.DB.prepare("SELECT 1 as ok").first();
     }),
     readConnection(c.env),
-    readUpdateAccess(c.env),
   ]);
 
   return c.json({
@@ -90,11 +87,6 @@ cloudflareRoutes.get("/status", async (c) => {
       error: d1Probe.error ?? null,
     },
     connection,
-    apiToken: {
-      stored: access.credential === "token",
-      accountId: access.credential === "token" ? access.accountId : null,
-      workerName: access.credential === "token" ? access.scriptName : null,
-    },
     installerOrigin: c.env.INSTALLER_ORIGIN || null,
     links: {
       workerDashboard: accountId
@@ -150,35 +142,6 @@ cloudflareRoutes.post("/connection/check", async (c) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : "The stored permission could not be renewed.";
     return c.json({ error: message }, 400);
-  }
-});
-
-const tokenBody = z.object({
-  token: z.string().trim().min(20).max(400),
-  accountId: z.string().trim().max(64).optional(),
-  workerName: z.string().trim().max(64).optional(),
-});
-
-/** Give a Dotnote without an installer grant an API token to update itself with (update/api-token.ts). */
-cloudflareRoutes.post("/token", zValidator("json", tokenBody), async (c) => {
-  const body = c.req.valid("json");
-  try {
-    const stored = await storeApiToken(c.env, { ...body, host: new URL(c.req.url).host });
-    return c.json({ ok: true, ...stored });
-  } catch (err) {
-    if (err instanceof TokenRejected) return c.json({ error: err.code, message: err.message }, 400);
-    const message = err instanceof Error ? err.message : "Cloudflare did not store the token.";
-    return c.json({ error: "token_failed", message }, 502);
-  }
-});
-
-cloudflareRoutes.delete("/token", async (c) => {
-  try {
-    await removeApiToken(c.env);
-    return c.json({ ok: true });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Cloudflare did not remove the token.";
-    return c.json({ error: "token_failed", message }, 502);
   }
 });
 
