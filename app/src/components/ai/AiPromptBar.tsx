@@ -5,6 +5,7 @@ import {
   ArrowUp,
   Briefcase,
   Check,
+  ChevronRight,
   CircleHelp,
   Expand,
   FileText,
@@ -45,7 +46,11 @@ import { looksLikeImageRequest, normalizeImagePrompt } from "@/lib/ai-image-inte
 import type { ImageOptimizationSettings } from "@/lib/image-settings";
 import { findImageModel } from "@shared/llm";
 import { cn } from "@/lib/utils";
-import { translationInstruction, translationPromptLabel } from "@/lib/languages";
+import {
+  SUPPORTED_LANGUAGES,
+  getLanguageName,
+  translationInstruction,
+} from "@/lib/languages";
 import { llmStore } from "@/stores/llm-store";
 import { uiPreferenceStore } from "@/stores/ui-preference-store";
 
@@ -63,24 +68,32 @@ const SELECTION_PROMPTS: Prompt[] = [
   { label: "Simplify language", icon: Sparkles, instruction: "Rewrite this in simpler, plainer language." },
   { label: "Make it professional", icon: Briefcase, instruction: "Rewrite this in a professional tone." },
   { label: "Make it casual", icon: Smile, instruction: "Rewrite this in a casual, friendly tone." },
+  { label: "Translate to", icon: Languages, instruction: "" },
   { label: "Summarize", icon: FileText, instruction: "Summarize this." },
   { label: "Explain this", icon: CircleHelp, instruction: "Explain what this means, briefly." },
 ];
 
-function buildTranslationPrompts(primaryCode: string): Prompt[] {
-  const codes = primaryCode === "en" ? ["en"] : [primaryCode, "en"];
-  const seen = new Set<string>();
-  const prompts: Prompt[] = [];
-  for (const code of codes) {
-    if (seen.has(code)) continue;
-    seen.add(code);
-    prompts.push({
-      label: translationPromptLabel(code),
-      icon: Languages,
-      instruction: translationInstruction(code),
-    });
-  }
-  return prompts;
+const TRANSLATE_MENU_LABEL = "Translate to";
+
+function translateMenuMatchesQuery(query: string): boolean {
+  if (!query) return true;
+  if (TRANSLATE_MENU_LABEL.toLowerCase().includes(query)) return true;
+  return SUPPORTED_LANGUAGES.some(
+    (lang) =>
+      lang.name.toLowerCase().includes(query) ||
+      lang.nativeName.toLowerCase().includes(query) ||
+      lang.code.toLowerCase().includes(query),
+  );
+}
+
+function filterLanguagesForQuery(query: string) {
+  if (!query) return SUPPORTED_LANGUAGES;
+  return SUPPORTED_LANGUAGES.filter(
+    (lang) =>
+      lang.name.toLowerCase().includes(query) ||
+      lang.nativeName.toLowerCase().includes(query) ||
+      lang.code.toLowerCase().includes(query),
+  );
 }
 
 const CURSOR_PROMPTS: Prompt[] = [
@@ -100,7 +113,15 @@ const CURSOR_PROMPTS: Prompt[] = [
   },
 ];
 
-type MenuItem = { id: string; label: string; icon: LucideIcon; run: () => void; danger?: boolean };
+type MenuItem = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  run: () => void;
+  danger?: boolean;
+  hasSubmenu?: boolean;
+  badge?: string;
+};
 
 export const AiPromptBar = observer(function AiPromptBar({
   editor,
@@ -130,6 +151,8 @@ export const AiPromptBar = observer(function AiPromptBar({
   const [turns, setTurns] = useState<AiTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [submenuOpen, setSubmenuOpen] = useState(false);
+  const [subActiveIndex, setSubActiveIndex] = useState(0);
   const [top, setTop] = useState<number | null>(null);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -146,14 +169,12 @@ export const AiPromptBar = observer(function AiPromptBar({
 
   const hasSelection = aiHasSelection(target);
   const translateTarget = uiPreferenceStore.aiTranslateTarget;
+  const translateTargetName = getLanguageName(translateTarget);
 
-  const selectionPrompts = useMemo(() => {
-    const base = SELECTION_PROMPTS;
-    const translateIndex = base.findIndex((p) => p.label === "Summarize");
-    const head = translateIndex >= 0 ? base.slice(0, translateIndex) : base;
-    const tail = translateIndex >= 0 ? base.slice(translateIndex) : [];
-    return [...head, ...buildTranslationPrompts(translateTarget), ...tail];
-  }, [translateTarget]);
+  const languageSubmenu = useMemo(
+    () => filterLanguagesForQuery(value.trim().toLowerCase()),
+    [value],
+  );
 
   useEffect(() => {
     void llmStore.ensureLoaded();
@@ -359,6 +380,21 @@ export const AiPromptBar = observer(function AiPromptBar({
     [phase, run, runImage, turns, value],
   );
 
+  const selectLanguageAndRun = useCallback(
+    (code: string) => {
+      uiPreferenceStore.setAiTranslateTarget(code);
+      setSubmenuOpen(false);
+      submit(translationInstruction(code));
+    },
+    [submit],
+  );
+
+  const openLanguageSubmenu = useCallback(() => {
+    setSubmenuOpen(true);
+    const idx = languageSubmenu.findIndex((lang) => lang.code === translateTarget);
+    setSubActiveIndex(idx >= 0 ? idx : 0);
+  }, [languageSubmenu, translateTarget]);
+
   const menu: MenuItem[] = useMemo(() => {
     if (phase === "streaming" || phase === "generating-image") return [];
     if (phase === "image-done") {
@@ -427,10 +463,31 @@ export const AiPromptBar = observer(function AiPromptBar({
       return items;
     }
     const query = value.trim().toLowerCase();
-    const prompts = hasSelection ? selectionPrompts : CURSOR_PROMPTS;
-    return prompts
-      .filter((p) => !query || p.label.toLowerCase().includes(query))
-      .map((p) => ({ id: p.label, label: p.label, icon: p.icon, run: () => submit(p.instruction) }));
+    if (hasSelection) {
+      return SELECTION_PROMPTS.filter((p) => {
+        if (!query) return true;
+        if (p.label === TRANSLATE_MENU_LABEL) return translateMenuMatchesQuery(query);
+        return p.label.toLowerCase().includes(query);
+      }).map((p) => {
+        if (p.label === TRANSLATE_MENU_LABEL) {
+          return {
+            id: "translate",
+            label: TRANSLATE_MENU_LABEL,
+            icon: Languages,
+            hasSubmenu: true,
+            badge: translateTargetName,
+            run: () => selectLanguageAndRun(translateTarget),
+          };
+        }
+        return { id: p.label, label: p.label, icon: p.icon, run: () => submit(p.instruction) };
+      });
+    }
+    return CURSOR_PROMPTS.filter((p) => !query || p.label.toLowerCase().includes(query)).map((p) => ({
+      id: p.label,
+      label: p.label,
+      icon: p.icon,
+      run: () => submit(p.instruction),
+    }));
   }, [
     apply,
     clearImagePreview,
@@ -443,8 +500,10 @@ export const AiPromptBar = observer(function AiPromptBar({
     retry,
     run,
     runImage,
-    selectionPrompts,
+    selectLanguageAndRun,
     submit,
+    translateTarget,
+    translateTargetName,
     turns,
     value,
   ]);
@@ -458,27 +517,78 @@ export const AiPromptBar = observer(function AiPromptBar({
     setActiveIndex((index) => (index < menu.length ? index : -1));
   }, [menu.length]);
 
+  useEffect(() => {
+    if (phase !== "idle") setSubmenuOpen(false);
+  }, [phase]);
+
+  useEffect(() => {
+    setSubActiveIndex((index) => (index < languageSubmenu.length ? index : 0));
+  }, [languageSubmenu.length]);
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      if (submenuOpen) {
+        setSubmenuOpen(false);
+        return;
+      }
       if (phase === "streaming" || phase === "generating-image") stop();
       else onClose(true);
       return;
     }
+    if (submenuOpen && languageSubmenu.length > 0) {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setSubmenuOpen(false);
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        setSubActiveIndex(
+          (index) => (index + step + languageSubmenu.length) % languageSubmenu.length,
+        );
+        return;
+      }
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        const lang = languageSubmenu[subActiveIndex];
+        if (lang) selectLanguageAndRun(lang.code);
+        return;
+      }
+    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       if (menu.length === 0) return;
       event.preventDefault();
+      setSubmenuOpen(false);
       const step = event.key === "ArrowDown" ? 1 : -1;
       setActiveIndex((index) => (index < 0 ? (step > 0 ? 0 : menu.length - 1) : (index + step + menu.length) % menu.length));
       return;
     }
+    if (event.key === "ArrowRight") {
+      const item = activeIndex >= 0 ? menu[activeIndex] : null;
+      if (item?.hasSubmenu && languageSubmenu.length > 0) {
+        event.preventDefault();
+        openLanguageSubmenu();
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (phase === "streaming" || phase === "generating-image") return;
+      const item = activeIndex >= 0 ? menu[activeIndex] : null;
+      if (item?.hasSubmenu) {
+        if (submenuOpen && languageSubmenu[subActiveIndex]) {
+          selectLanguageAndRun(languageSubmenu[subActiveIndex].code);
+        } else {
+          item.run();
+        }
+        return;
+      }
       // A highlighted menu item wins; typing clears the highlight, so Enter sends the text.
-      if (activeIndex >= 0 && menu[activeIndex]) menu[activeIndex].run();
+      if (item) item.run();
       else submit(value);
     }
   };
@@ -545,6 +655,7 @@ export const AiPromptBar = observer(function AiPromptBar({
             value={value}
             onChange={(e) => {
               setValue(e.target.value);
+              setSubmenuOpen(false);
               setActiveIndex(e.target.value.trim() ? -1 : 0);
             }}
             onKeyDown={onKeyDown}
@@ -596,24 +707,74 @@ export const AiPromptBar = observer(function AiPromptBar({
       </div>
 
       {menu.length > 0 ? (
-        <div className="w-64 overflow-hidden rounded-lg border border-divider bg-well py-1 shadow-[0_6px_24px_rgba(15,23,42,0.12)] dark:shadow-[0_6px_24px_rgba(0,0,0,0.5)]">
+        <div className="relative w-64 overflow-visible rounded-lg border border-divider bg-well py-1 shadow-[0_6px_24px_rgba(15,23,42,0.12)] dark:shadow-[0_6px_24px_rgba(0,0,0,0.5)]">
           {menu.map((item, index) => {
             const Icon = item.icon;
+            const isSelected = index === activeIndex;
+            const showSubmenu = item.hasSubmenu && submenuOpen && isSelected;
+
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={item.run}
-                className={cn(
-                  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm",
-                  index === activeIndex ? "bg-raised" : "",
-                  item.danger ? "text-danger" : "text-ink",
-                )}
+                className="relative"
+                onMouseEnter={() => {
+                  setActiveIndex(index);
+                  if (item.hasSubmenu && languageSubmenu.length > 0) openLanguageSubmenu();
+                  else setSubmenuOpen(false);
+                }}
               >
-                <Icon className={cn("size-4 shrink-0", item.danger ? "text-danger" : "text-accent-color")} />
-                {item.label}
-              </button>
+                <button
+                  type="button"
+                  onClick={item.run}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm",
+                    isSelected ? "bg-raised" : "",
+                    item.danger ? "text-danger" : "text-ink",
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Icon className={cn("size-4 shrink-0", item.danger ? "text-danger" : "text-accent-color")} />
+                    {item.label}
+                  </span>
+                  {item.hasSubmenu ? (
+                    <span className="flex shrink-0 items-center gap-1 text-xs text-dim">
+                      <span className="max-w-[5.5rem] truncate">{item.badge}</span>
+                      <ChevronRight className="size-3.5" />
+                    </span>
+                  ) : null}
+                </button>
+
+                {showSubmenu ? (
+                  <div className="absolute top-0 left-[calc(100%+4px)] z-40 max-h-64 w-52 overflow-y-auto rounded-lg border border-divider bg-well py-1 shadow-[0_6px_24px_rgba(15,23,42,0.12)] dark:shadow-[0_6px_24px_rgba(0,0,0,0.5)]">
+                    {languageSubmenu.map((lang, subIndex) => {
+                      const isCurrent = lang.code === translateTarget;
+                      const isSubSelected = subIndex === subActiveIndex;
+                      return (
+                        <button
+                          key={lang.code}
+                          type="button"
+                          onMouseEnter={() => setSubActiveIndex(subIndex)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            selectLanguageAndRun(lang.code);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm",
+                            isSubSelected ? "bg-raised" : "",
+                            isCurrent ? "font-medium text-accent-color" : "text-ink",
+                          )}
+                        >
+                          <span className="min-w-0 truncate">
+                            {lang.name}{" "}
+                            <span className="text-xs text-dim">({lang.nativeName})</span>
+                          </span>
+                          {isCurrent ? <Check className="size-3.5 shrink-0 text-accent-color" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
             );
           })}
         </div>
