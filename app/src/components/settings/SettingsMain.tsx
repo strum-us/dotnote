@@ -5,6 +5,7 @@ import { AiSettings } from "@/components/settings/sections/AiSettings";
 import { CloudflareSettings } from "@/components/settings/sections/CloudflareSettings";
 import { GeneralSettings } from "@/components/settings/sections/GeneralSettings";
 import { ImageSettings } from "@/components/settings/sections/ImageSettings";
+import { UpdateSettings } from "@/components/settings/sections/UpdateSettings";
 
 export function SettingsMain({
   section,
@@ -22,6 +23,7 @@ export function SettingsMain({
       {section === "ai-image" ? <AiImageSettings /> : null}
       {section === "images" ? <ImageSettings /> : null}
       {section === "cloudflare" ? <CloudflareSettings /> : null}
+      {section === "update" ? <UpdateSettings /> : null}
       {section === "account" ? <AccountSettings onSignOut={onSignOut} /> : null}
     </main>
   );

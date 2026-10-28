@@ -1,4 +1,4 @@
-import { ArrowLeft, Cloud, Image, ImagePlus, Info, Sparkles, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowUpCircle, Cloud, Image, ImagePlus, Info, Sparkles, UserRound } from "lucide-react";
 
 import type { SettingsSection } from "@/lib/settings-section";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ const workspaceItems: { id: SettingsSection; label: string; icon: typeof Info }[
   { id: "ai-image", label: "AI Image", icon: ImagePlus },
   { id: "images", label: "Images", icon: Image },
   { id: "cloudflare", label: "Cloudflare", icon: Cloud },
+  { id: "update", label: "Updates", icon: ArrowUpCircle },
 ];
 
 const accountItem = { id: "account" as const, label: "Account", icon: UserRound };

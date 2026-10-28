@@ -1,7 +1,7 @@
-import MarkdownPreview from "@uiw/react-markdown-preview";
 import { Loader2 } from "lucide-react";
 import { observer } from "mobx-react-lite";
 
+import { ReleaseNotesPreview } from "@/components/update/ReleaseNotesPreview";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,25 +12,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatBytes } from "@/lib/format-bytes";
-import { themeStore } from "@/stores/theme-store";
 import { updateStore } from "@/stores/update-store";
 
-import "@uiw/react-markdown-preview/markdown.css";
-
 export type UpdateDialogIntent = "confirm" | "notes";
-
-const ReleaseNotes = observer(function ReleaseNotes({ source }: { source: string }) {
-  return (
-    <div className="max-h-72 min-h-0 overflow-auto rounded-sm border border-divider bg-well px-3 py-2">
-      <MarkdownPreview
-        source={source}
-        wrapperElement={{ "data-color-mode": themeStore.resolved }}
-        style={{ backgroundColor: "transparent" }}
-        className="!bg-transparent !text-[13px] [&_h1]:!mt-1 [&_h1]:!border-0 [&_h1]:!pb-0 [&_h1]:!text-base [&_h2]:!border-0 [&_h2]:!pb-0 [&_h2]:!text-sm [&_ul]:!list-disc"
-      />
-    </div>
-  );
-});
 
 /** Release notes, and the one confirmation before this Dotnote replaces its own Worker. */
 export const UpdateDialog = observer(function UpdateDialog({
@@ -71,7 +55,7 @@ export const UpdateDialog = observer(function UpdateDialog({
         </DialogHeader>
         {intent === "confirm" && details.length ? <p className="text-xs text-dim">{details.join(" · ")}</p> : null}
         {check?.notes ? (
-          <ReleaseNotes source={check.notes} />
+          <ReleaseNotesPreview source={check.notes} />
         ) : (
           <p className="text-xs text-dim">This release has no notes.</p>
         )}

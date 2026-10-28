@@ -7,7 +7,7 @@ import { noteStore } from "@/stores/note-store";
 import { syncStore } from "@/stores/sync-store";
 import { uiPreferenceStore } from "@/stores/ui-preference-store";
 
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 /** Coming back to the tab checks again, at most as often as the Worker refreshes its release cache. */
 const RETURN_CHECK_MIN_MS = 15 * 60 * 1000;
 const STEP_DELAY_MS = 250;
@@ -140,7 +140,7 @@ class UpdateStore {
     return true;
   }
 
-  /** Check now, when the tab comes back after a while, and every six hours. Returns the cleanup. */
+  /** Check now, when the tab comes back after a while, and every 30 minutes. Returns the cleanup. */
   boot(): () => void {
     this.stopBoot?.();
     void this.refresh();
