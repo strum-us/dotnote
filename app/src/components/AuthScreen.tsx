@@ -11,7 +11,7 @@ import { FieldCheck } from "@/components/ui/field-check";
 function resetHref(installerOrigin: string): string | null {
   try {
     const url = new URL(installerOrigin);
-    url.searchParams.set("mode", "reset");
+    url.pathname = "/reset";
     url.searchParams.set("instance", window.location.origin);
     return url.toString();
   } catch {

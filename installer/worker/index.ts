@@ -340,6 +340,15 @@ app.get("/release/*", async (c) => {
   return res;
 });
 
+app.get("/reconnect", (c) => serveReconnectPage(c.req.raw, c.env));
+app.get("/reconnect/*", (c) => serveReconnectPage(c.req.raw, c.env));
+
+function serveReconnectPage(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  url.pathname = "/reconnect/index.html";
+  return env.ASSETS.fetch(new Request(url, request));
+}
+
 app.all("*", async (c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default app;

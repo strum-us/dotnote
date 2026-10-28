@@ -117,7 +117,7 @@ cloudflareRoutes.post("/reconnect", async (c) => {
   const connection = await readConnection(c.env);
   const instance = new URL(c.req.url).origin;
   const url = new URL(origin);
-  url.searchParams.set("mode", "reconnect");
+  url.pathname = "/reconnect";
   url.searchParams.set("instance", instance);
   url.searchParams.set("code", code);
   if (connection.accountId) url.searchParams.set("accountId", connection.accountId);

@@ -32,14 +32,75 @@ function h(tag, attrs = {}, ...children) {
   return node;
 }
 
+/** Set while finishing a legacy `/oauth/callback` so tokens stay in the flow that started sign-in. */
+let flowOverride = null;
+
+function flowName() {
+  if (flowOverride) return flowOverride;
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  if (path === "/reconnect" || path.startsWith("/reconnect/")) return "reconnect";
+  if (path === "/reset" || path.startsWith("/reset/")) return "reset";
+  if (path === "/install" || path.startsWith("/install/")) return "install";
+  return null;
+}
+
+function flowHome() {
+  const flow = flowName();
+  if (flow === "reconnect") return "/reconnect";
+  if (flow === "reset") return "/reset";
+  return "/install";
+}
+
+function oauthCallbackPath() {
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  if (path === "/oauth/callback") return "/oauth/callback";
+  const flow = flowName();
+  if (flow === "reconnect") return "/reconnect/oauth/callback";
+  if (flow === "reset") return "/reset/oauth/callback";
+  return "/install/oauth/callback";
+}
+
 function sessionGet(key) {
-  return sessionStorage.getItem(key);
+  const flow = flowName();
+  if (!flow) return null;
+  return sessionStorage.getItem(`${flow}:${key}`);
 }
 function sessionSet(key, value) {
-  sessionStorage.setItem(key, value);
+  const flow = flowName();
+  if (!flow) return;
+  sessionStorage.setItem(`${flow}:${key}`, value);
 }
 function sessionDel(key) {
-  sessionStorage.removeItem(key);
+  const flow = flowName();
+  if (!flow) return;
+  sessionStorage.removeItem(`${flow}:${key}`);
+}
+
+/** Old `/?mode=` links land on `/`. Send each job to its own route before any session write. */
+function redirectLegacyEntry() {
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  const query = new URLSearchParams(location.search);
+  if (path === "/") {
+    const mode = query.get("mode");
+    query.delete("mode");
+    const search = query.toString();
+    const suffix = search ? `?${search}` : "";
+    if (mode === "reconnect") {
+      location.replace(`/reconnect${suffix}`);
+      return true;
+    }
+    if (mode === "reset") {
+      location.replace(`/reset${suffix}`);
+      return true;
+    }
+    location.replace(`/install${suffix}`);
+    return true;
+  }
+  if (path === "/oauth/callback") {
+    const pending = sessionStorage.getItem("dotnote.oauth.flow");
+    flowOverride = pending === "reconnect" || pending === "reset" ? pending : "install";
+  }
+  return false;
 }
 
 function installs() {
@@ -88,6 +149,14 @@ function paintStepList(stepIndex) {
 }
 
 function shell(stepIndex, title, ...body) {
+  if (flowName() === "reconnect") {
+    if (stepList) stepList.replaceChildren();
+    card.replaceChildren(
+      h("h2", { class: "panel-title" }, title),
+      h("div", { class: "panel-body" }, ...body),
+    );
+    return;
+  }
   paintStepList(stepIndex);
   const badge = `${String(stepIndex + 1).padStart(2, "0")} · ${WIZARD[stepIndex]}`;
   card.replaceChildren(
@@ -99,6 +168,12 @@ function shell(stepIndex, title, ...body) {
 
 function setFine() {
   if (!fine) return;
+  if (flowName() === "reconnect") {
+    fine.textContent = config?.releaseVersion
+      ? `Release ${config.releaseVersion}. This page only reconnects an existing Dotnote. It does not install a new one.`
+      : "This page only reconnects an existing Dotnote. It does not install a new one.";
+    return;
+  }
   fine.textContent = config?.releaseVersion
     ? `Release ${config.releaseVersion}. This page uses a short-lived Cloudflare access token and does not keep it. Your refresh token is sent only to your new Dotnote after it proves it is live.`
     : "This page uses a short-lived Cloudflare access token and does not keep it. Your refresh token is sent only to your new Dotnote after it proves it is live.";
@@ -169,32 +244,25 @@ function forgetToken() {
 }
 
 function connected() {
+  if (flowName() === "reconnect") return !!sessionGet("dotnote.oauth.refresh");
   return !!sessionGet("dotnote.oauth.access") || !!sessionGet("dotnote.oauth.refresh");
 }
 
 function captureEntry() {
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  // The OAuth return also uses ?code=. That is Cloudflare's authorization code, not the setup code.
+  if (path.endsWith("/oauth/callback")) return;
   const query = new URLSearchParams(location.search);
-  const mode = query.get("mode");
-  if (mode === "reconnect") {
-    sessionSet("dotnote.reconnect.instance", query.get("instance") || "");
-    sessionSet("dotnote.reconnect.code", query.get("code") || "");
-    sessionSet("dotnote.reconnect.accountId", query.get("accountId") || "");
-    sessionDel("dotnote.reset.instance");
+  const flow = flowName();
+  if (flow === "reconnect") {
+    if (query.get("instance")) sessionSet("dotnote.reconnect.instance", query.get("instance"));
+    if (query.get("code")) sessionSet("dotnote.reconnect.code", query.get("code"));
+    if (query.get("accountId")) sessionSet("dotnote.reconnect.accountId", query.get("accountId"));
     return;
   }
-  if (mode === "reset") {
-    sessionSet("dotnote.reset.instance", query.get("instance") || "");
-    sessionDel("dotnote.reconnect.instance");
-    sessionDel("dotnote.reconnect.code");
-    sessionDel("dotnote.reconnect.accountId");
+  if (flow === "reset" && query.get("instance")) {
+    sessionSet("dotnote.reset.instance", query.get("instance"));
     forgetToken();
-    return;
-  }
-  if (location.pathname === "/") {
-    sessionDel("dotnote.reconnect.instance");
-    sessionDel("dotnote.reconnect.code");
-    sessionDel("dotnote.reconnect.accountId");
-    sessionDel("dotnote.reset.instance");
   }
 }
 
@@ -236,12 +304,15 @@ async function connect() {
   const state = bytesToB64Url(crypto.getRandomValues(new Uint8Array(16)));
   sessionSet("dotnote.oauth.verifier", verifier);
   sessionSet("dotnote.oauth.state", state);
-  const redirect = `${location.origin}/oauth/callback`;
+  sessionStorage.setItem("dotnote.oauth.flow", flowName() || "install");
+  const redirect = `${location.origin}${oauthCallbackPath()}`;
   const url = new URL("https://dash.cloudflare.com/oauth2/auth");
+  // Cloudflare returns a refresh token only when the authorize request includes offline_access.
+  const scopes = [...new Set(["offline_access", ...(config.scopes || [])])];
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", config.clientId);
   url.searchParams.set("redirect_uri", redirect);
-  url.searchParams.set("scope", config.scopes.join(" "));
+  url.searchParams.set("scope", scopes.join(" "));
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", await sha256b64url(verifier));
   url.searchParams.set("code_challenge_method", "S256");
@@ -249,21 +320,23 @@ async function connect() {
 }
 
 async function finishCallback() {
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  if (!path.endsWith("/oauth/callback")) return false;
   const query = new URLSearchParams(location.search);
+  if (query.get("error")) {
+    history.replaceState({}, "", flowHome());
+    shell(0, "Sign in to Cloudflare", h("p", { class: "error" }, query.get("error_description") || query.get("error")));
+    return true;
+  }
   const code = query.get("code");
   const state = query.get("state");
-  if (query.get("error")) {
-    history.replaceState({}, "", "/");
-    shell(0, "Sign in to Cloudflare", h("p", { class: "error" }, query.get("error_description") || query.get("error")));
-    return;
-  }
   if (!code) return false;
   if (!state || state !== sessionGet("dotnote.oauth.state")) {
-    history.replaceState({}, "", "/");
+    history.replaceState({}, "", flowHome());
     shell(0, "Sign in to Cloudflare", h("p", { class: "error" }, "The Cloudflare return did not match this tab."));
     return true;
   }
-  const redirect = `${location.origin}/oauth/callback`;
+  const redirect = `${location.origin}${path}`;
   const res = await fetch("https://dash.cloudflare.com/oauth2/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -276,8 +349,9 @@ async function finishCallback() {
     }),
   });
   const json = await res.json().catch(() => ({}));
-  history.replaceState({}, "", "/");
   if (!res.ok || !json.access_token) {
+    history.replaceState({}, "", flowHome());
+    flowOverride = null;
     shell(
       0,
       "Sign in to Cloudflare",
@@ -289,6 +363,18 @@ async function finishCallback() {
   rememberToken(json);
   sessionDel("dotnote.oauth.verifier");
   sessionDel("dotnote.oauth.state");
+  sessionStorage.removeItem("dotnote.oauth.flow");
+  history.replaceState({}, "", flowHome());
+  flowOverride = null;
+  if (flowName() === "reconnect" && !sessionGet("dotnote.oauth.refresh")) {
+    shell(
+      0,
+      "Reconnect Cloudflare",
+      h("p", { class: "error" }, "Cloudflare signed you in but did not return a refresh token this Dotnote can keep."),
+      h("button", { onclick: () => void connect() }, "Sign in again"),
+    );
+    return true;
+  }
   return false;
 }
 
@@ -301,6 +387,24 @@ function showConnect() {
       ? h("p", { class: "status-line" }, "You will see Cloudflare’s consent screen for Workers, D1, R2, and DNS-related scopes.")
       : h("p", { class: "status-line is-warn" }, "This installer is not linked to an OAuth client yet. Set OAUTH_CLIENT_ID on the installer Worker, then reload."),
     h("button", { onclick: () => void connect(), disabled: !config.clientId }, "Connect Cloudflare"),
+  );
+}
+
+function showConnectForReconnect() {
+  const instance = sessionGet("dotnote.reconnect.instance") || "";
+  shell(
+    0,
+    "Reconnect Cloudflare",
+    h(
+      "p",
+      { class: "lead" },
+      "Sign in to Cloudflare so this Dotnote can store permission to update itself. Your refresh token is sent only to your Dotnote after it accepts the setup code.",
+    ),
+    instance ? h("p", { class: "hint" }, instance) : null,
+    config.clientId
+      ? h("p", { class: "status-line" }, "You will see Cloudflare’s consent screen for Workers, D1, R2, and DNS-related scopes.")
+      : h("p", { class: "status-line is-warn" }, "This installer is not linked to an OAuth client yet. Set OAUTH_CLIENT_ID on the installer Worker, then reload."),
+    h("button", { onclick: () => void connect(), disabled: !config.clientId }, "Sign in to Cloudflare"),
   );
 }
 
@@ -776,19 +880,24 @@ async function waitUntilDotnote(address, code, accountId, installationId) {
   throw new Error("Dotnote is not answering at that address yet.");
 }
 
-async function handoffTo(address, code, accountId, installationId) {
+async function handoffTo(address, code, accountId, installationId, options = {}) {
   const url = installUrl(address);
-  const retry = () => handoffTo(address, code, accountId, installationId);
+  const prove = options.prove !== false;
+  const requireRefresh = options.requireRefresh === true;
+  const title = requireRefresh ? "Reconnect Cloudflare" : "Finish install";
+  const retry = () => handoffTo(address, code, accountId, installationId, options);
 
-  try {
-    await waitUntilDotnote(address, code, accountId, installationId);
-  } catch (err) {
-    handoffPanel("Waiting for Dotnote", address, {
-      hint: "When Dotnote responds, handoff continues automatically on Try again.",
-      error: err instanceof Error ? err.message : "Dotnote is not answering yet.",
-      onRetry: retry,
-    });
-    return false;
+  if (prove) {
+    try {
+      await waitUntilDotnote(address, code, accountId, installationId);
+    } catch (err) {
+      handoffPanel("Waiting for Dotnote", address, {
+        hint: "When Dotnote responds, handoff continues automatically on Try again.",
+        error: err instanceof Error ? err.message : "Dotnote is not answering yet.",
+        onRetry: retry,
+      });
+      return false;
+    }
   }
 
   let access = sessionGet("dotnote.oauth.access");
@@ -798,25 +907,44 @@ async function handoffTo(address, code, accountId, installationId) {
     /* Refresh may still be missing; handled below. */
   }
   const refresh = sessionGet("dotnote.oauth.refresh");
-  if (!refresh) {
+  const resolvedAccount = accountId || sessionGet("dotnote.oauth.accountId");
+  if (!refresh || !resolvedAccount) {
+    if (requireRefresh) {
+      handoffPanel(title, address, {
+        error: !refresh
+          ? "Cloudflare did not return a permission this Dotnote can keep. Sign in again."
+          : "Choose the Cloudflare account that owns this Dotnote.",
+        onRetry: () => {
+          forgetToken();
+          void connect();
+        },
+      });
+      return false;
+    }
     showInstallFinished(address);
     return true;
   }
 
+  shell(6, title, h("p", { class: "hint" }, "Sending Cloudflare permission to this Dotnote…"), h("p", { class: "hint" }, url));
   const res = await fetch(`${url}/api/install/handoff`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       code,
       refreshToken: refresh,
-      accountId: accountId || sessionGet("dotnote.oauth.accountId"),
+      accountId: resolvedAccount,
       scopes: sessionGet("dotnote.oauth.scope") || config.scopes.join(" "),
     }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    showInstallFinished(address);
-    return true;
+    const message = typeof json.error === "string" ? json.error : "This Dotnote did not accept the Cloudflare permission.";
+    handoffPanel(title, address, {
+      error: message,
+      hint: requireRefresh ? "Start again from Settings › Updates. The setup code expires after 10 minutes." : null,
+      onRetry: retry,
+    });
+    return false;
   }
   if (installationId && access) {
     const saved = installs()[installationId];
@@ -829,6 +957,10 @@ async function handoffTo(address, code, accountId, installationId) {
     }
   }
   forgetToken();
+  if (requireRefresh) {
+    location.assign(`${url}/settings/update`);
+    return true;
+  }
   showInstallFinished(address);
   location.assign(url);
   return true;
@@ -909,9 +1041,48 @@ function showReset() {
 async function showReconnect() {
   const instance = sessionGet("dotnote.reconnect.instance");
   const code = sessionGet("dotnote.reconnect.code");
-  const accountId = sessionGet("dotnote.reconnect.accountId") || sessionGet("dotnote.oauth.accountId");
-  shell(6, "Reconnect Cloudflare", h("p", { class: "hint" }, instance));
-  const handed = await handoffTo(instance, code, accountId, null);
+  if (!instance || !code) {
+    shell(6, "Reconnect Cloudflare", h("p", { class: "error" }, "This reconnect link is missing its setup code. Start again from Settings › Updates."));
+    return;
+  }
+  let accountId = sessionGet("dotnote.reconnect.accountId") || sessionGet("dotnote.oauth.accountId");
+  if (!accountId) {
+    shell(6, "Reconnect Cloudflare", h("p", { class: "hint" }, "Loading Cloudflare accounts…"));
+    const { accounts } = await api("/api/accounts");
+    if (!accounts?.length) {
+      shell(6, "Reconnect Cloudflare", h("p", { class: "error" }, "This Cloudflare login has no account."));
+      return;
+    }
+    if (accounts.length > 1) {
+      shell(
+        6,
+        "Reconnect Cloudflare",
+        h("p", { class: "lead" }, "Choose the account that owns this Dotnote."),
+        h("p", { class: "hint" }, instance),
+        h(
+          "div",
+          { class: "stack" },
+          ...accounts.map((item) =>
+            h("button", {
+              class: "choice",
+              onclick: () => {
+                sessionSet("dotnote.oauth.accountId", item.id);
+                sessionSet("dotnote.reconnect.accountId", item.id);
+                void showReconnect();
+              },
+            }, item.name),
+          ),
+        ),
+      );
+      return;
+    }
+    accountId = accounts[0].id;
+    sessionSet("dotnote.oauth.accountId", accountId);
+    sessionSet("dotnote.reconnect.accountId", accountId);
+  }
+  shell(6, "Reconnect Cloudflare", h("p", { class: "hint" }, "Saving Cloudflare permission on this Dotnote…"), h("p", { class: "hint" }, instance));
+  // The instance is already live. Its reconnect code is checked on handoff, not by the install prove secret.
+  const handed = await handoffTo(instance, code, accountId, null, { prove: false, requireRefresh: true });
   if (!handed) return;
   sessionDel("dotnote.reconnect.instance");
   sessionDel("dotnote.reconnect.code");
@@ -919,6 +1090,22 @@ async function showReconnect() {
 }
 
 async function boot() {
+  if (redirectLegacyEntry()) return;
+  if (!flowName()) {
+    location.replace("/install");
+    return;
+  }
+  const heroTitle = document.querySelector(".hero h1");
+  const heroLead = document.querySelector(".hero-lead");
+  if (flowName() === "reconnect" && heroTitle) {
+    heroTitle.textContent = "Reconnect Cloudflare";
+    if (heroLead) heroLead.textContent = "Allow this Dotnote to update itself. This stays separate from a new install.";
+    document.title = "Reconnect Dotnote";
+  } else if (flowName() === "reset" && heroTitle) {
+    heroTitle.textContent = "Reset password";
+    if (heroLead) heroLead.textContent = "Set a new owner password for this Dotnote.";
+    document.title = "Reset Dotnote password";
+  }
   captureEntry();
   initStepList();
   config = await fetch("/api/config").then((res) => res.json());
@@ -938,16 +1125,20 @@ async function boot() {
     showReset();
     return;
   }
-  if (!connected()) {
-    showConnect();
-    return;
-  }
   if (reconnecting()) {
+    if (!connected()) {
+      showConnectForReconnect();
+      return;
+    }
     try {
       await showReconnect();
     } catch (err) {
       shell(6, "Reconnect Cloudflare", h("p", { class: "error" }, err instanceof Error ? err.message : "Reconnect failed."));
     }
+    return;
+  }
+  if (!connected()) {
+    showConnect();
     return;
   }
   const current = sessionGet("dotnote.install.current");

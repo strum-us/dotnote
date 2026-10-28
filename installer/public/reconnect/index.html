@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      (function(){var k="dotnote-theme";var d=document.documentElement;function sys(){return window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}function apply(mode){var r=mode==="system"?sys():mode;d.classList.toggle("dark",r==="dark");d.style.colorScheme=r;}try{var s=localStorage.getItem(k);var m=s==="light"||s==="dark"||s==="system"?s:"system";apply(m);}catch(e){apply("system");}})();
+    </script>
+    <title>Reconnect Dotnote</title>
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/deploy.css" />
+  </head>
+  <body class="install-page">
+    <div class="page-glow" aria-hidden="true"></div>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="https://dotnote.cloud/">
+          <img src="/logo.svg" alt="" width="30" height="30" />
+          <span class="brand-name">Dotnote</span>
+        </a>
+        <nav class="header-nav" aria-label="Primary">
+          <a href="https://dotnote.cloud/#features">Features</a>
+          <a href="https://dotnote.cloud/#stack">Your stack</a>
+          <a href="/install">Install</a>
+        </nav>
+        <a class="header-cta" href="/install">
+          <svg class="header-cta-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 13v8" />
+            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+            <path d="m8 17 4-4 4 4" />
+          </svg>
+          <span class="header-cta-short">Install</span>
+          <span class="header-cta-long">Install on your Cloudflare</span>
+        </a>
+      </div>
+    </header>
+    <main class="page-main">
+      <div class="hero">
+        <h1>Reconnect Cloudflare</h1>
+        <p class="hero-lead">
+          Allow this Dotnote to update itself. Your notes stay where they are.
+        </p>
+      </div>
+      <div class="install-wizard" id="wizard">
+        <section class="panel" id="card" aria-live="polite"></section>
+      </div>
+      <p class="fine" id="fine"></p>
+    </main>
+    <footer class="site-footer">
+      <div class="footer-row">
+        <div class="footer-brand">
+          <img src="/logo.svg" alt="" width="20" height="20" />
+          <span id="footer-year"></span>
+        </div>
+        <p class="footer-note">
+          This page sends a Cloudflare permission to your existing Dotnote. It does not create a new installation.
+        </p>
+      </div>
+    </footer>
+    <script>
+      document.getElementById("footer-year").textContent =
+        "© " + new Date().getFullYear() + " Dotnote";
+    </script>
+    <script src="/deploy.js" type="module"></script>
+  </body>
+</html>
