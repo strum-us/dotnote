@@ -4,6 +4,7 @@ import { observer } from "mobx-react-lite";
 import { toast } from "sonner";
 import {
   LLM_PROVIDER_META,
+  apiKeyMismatchMessage,
   findLlmModel,
   formatLlmModelPrice,
   getLlmProviderMeta,
@@ -99,6 +100,11 @@ export const AiSettings = observer(function AiSettings() {
   const saveKey = async () => {
     const trimmed = newKeyValue.trim();
     if (!trimmed) return;
+    const mismatch = apiKeyMismatchMessage(newKeyProvider, trimmed);
+    if (mismatch) {
+      toast.error(mismatch);
+      return;
+    }
     setBusyProvider(newKeyProvider);
     try {
       await llmStore.update({ apiKeys: { [newKeyProvider]: trimmed } });

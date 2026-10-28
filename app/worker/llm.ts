@@ -10,6 +10,7 @@ import {
   DEFAULT_LLM_PROVIDER,
   IMAGE_ASPECT_RATIOS,
   LLM_PROVIDER_IDS,
+  apiKeyMismatchMessage,
   findImageModel,
   getImageModelProvider,
   IMAGE_INPUT_MIME_TYPES,
@@ -275,14 +276,21 @@ async function providerFailure(name: string, res: Response): Promise<ProviderErr
     // keep raw text
   }
   if (res.status === 401) {
+    const safe = redactSecrets(detail);
     return new ProviderError(
-      detail ? `${name}: ${detail}` : `${name} rejected the API key. Check Settings → AI and save the key again.`,
+      safe ? `${name}: ${safe}` : `${name} rejected the API key. Check Settings → AI and save the key again.`,
     );
   }
   if (res.status === 403) {
     return new ProviderError(detail ? `${name}: ${detail}` : `${name} denied access to this model or project.`);
   }
-  return new ProviderError(`${name} error ${res.status}${detail ? `: ${detail}` : ""}`);
+  const safe = redactSecrets(detail);
+  return new ProviderError(`${name} error ${res.status}${safe ? `: ${safe}` : ""}`);
+}
+
+/** OpenAI echoes the submitted key. Never put that text in the note. */
+function redactSecrets(detail: string): string {
+  return detail.replace(/\b(?:sk|xai|AIza)[-A-Za-z0-9_*]{6,}\b/g, "[redacted]");
 }
 
 /** OpenAI and xAI both serve the Chat Completions streaming shape. */
@@ -415,8 +423,13 @@ llmRoutes.patch(
     const keys: ApiKeys = { ...current.keys };
     for (const [provider, value] of Object.entries(patch.apiKeys ?? {}) as [LlmProviderId, string][]) {
       const trimmed = normalizeApiKey(value);
-      if (trimmed) keys[provider] = trimmed;
-      else delete keys[provider];
+      if (!trimmed) {
+        delete keys[provider];
+        continue;
+      }
+      const mismatch = apiKeyMismatchMessage(provider, trimmed);
+      if (mismatch) return c.json({ error: mismatch }, 400);
+      keys[provider] = trimmed;
     }
     const activeProvider = patch.activeProvider ?? current.activeProvider;
     const model = patch.model?.trim() || current.model;
@@ -610,6 +623,8 @@ llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), asyn
   }
   const apiKey = normalizeApiKey(s.keys[provider] ?? "");
   if (!apiKey) return c.json({ error: `no_${provider}_key` }, 400);
+  const mismatch = apiKeyMismatchMessage(provider, apiKey);
+  if (mismatch) return c.json({ error: mismatch }, 400);
 
   const upstream = new AbortController();
   c.req.raw.signal?.addEventListener("abort", () => upstream.abort());

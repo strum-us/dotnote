@@ -45,6 +45,39 @@ export function getLlmProviderMeta(id: LlmProviderId): LlmProviderMeta {
 }
 
 /**
+ * Refuse a key that belongs to a different provider. OpenAI image calls were
+ * failing because an xAI key (`xai-…`) had been saved in the OpenAI slot.
+ */
+export function apiKeyMismatchMessage(provider: LlmProviderId, key: string): string | null {
+  const value = key.trim();
+  if (!value) return null;
+  if (provider === "openai") {
+    if (value.startsWith("xai-")) {
+      return "That value is an xAI key (it starts with xai-). Save it under xAI, and paste an OpenAI key (it starts with sk-) under OpenAI.";
+    }
+    if (value.startsWith("sk-ant-")) {
+      return "That value is an Anthropic key. Save it under Anthropic, and paste an OpenAI key (it starts with sk-) under OpenAI.";
+    }
+    if (value.startsWith("AIza")) {
+      return "That value is a Google Gemini key. Save it under Google Gemini, and paste an OpenAI key (it starts with sk-) under OpenAI.";
+    }
+    if (!value.startsWith("sk-")) {
+      return "OpenAI keys start with sk-. Paste a key from platform.openai.com into the OpenAI provider.";
+    }
+  }
+  if (provider === "xai" && !value.startsWith("xai-")) {
+    return "xAI keys start with xai-. Paste a key from console.x.ai.";
+  }
+  if (provider === "anthropic" && !value.startsWith("sk-ant-")) {
+    return "Anthropic keys start with sk-ant-.";
+  }
+  if (provider === "gemini" && !value.startsWith("AIza")) {
+    return "Gemini keys from Google AI Studio start with AIza.";
+  }
+  return null;
+}
+
+/**
  * Model picker catalog, ported from tablepad without retired ids or aliases.
  * Anthropic list: Claude models table cached 2026-10-06. Other providers:
  * tablepad audit of 2026-08-13 against each provider's pricing docs.

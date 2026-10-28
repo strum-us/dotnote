@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   IMAGE_ASPECT_RATIOS,
   IMAGE_MODEL_CATALOG,
+  apiKeyMismatchMessage,
   findImageModel,
   getImageModelProvider,
   getLlmProviderMeta,
@@ -66,6 +67,11 @@ export const AiImageSettings = observer(function AiImageSettings() {
   const saveKey = async () => {
     const trimmed = newKeyValue.trim();
     if (!trimmed) return;
+    const mismatch = apiKeyMismatchMessage("gemini", trimmed);
+    if (mismatch) {
+      toast.error(mismatch);
+      return;
+    }
     setBusyKey(true);
     try {
       await llmStore.update({ apiKeys: { gemini: trimmed } });
