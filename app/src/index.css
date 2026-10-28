@@ -74,6 +74,26 @@
     border-color: var(--divider);
   }
 
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--dim) 45%, transparent) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--dim) 55%, var(--raised));
+    border: 1px solid var(--divider);
+    border-radius: 0;
+  }
+
   html,
   body,
   #root {
