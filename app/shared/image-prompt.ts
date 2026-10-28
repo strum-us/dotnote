@@ -1,15 +1,18 @@
-import { getImageModelProvider } from "./llm";
+import { getImageModelProvider, resolveOpenAiImageModelId } from "./llm";
 
 /** OpenAI Images API prompt length limits (characters). */
 const OPENAI_IMAGE_PROMPT_MAX: Record<string, number> = {
   "dall-e-3": 4_000,
   "dall-e-2": 1_000,
+  "gpt-image-2.5-flare": 4_000,
+  "gpt-image-2.5-sunburst": 4_000,
 };
 
 /** Extra room for Gemini image requests (much higher upstream; keep prompts focused). */
 const GEMINI_CONTEXT_MAX = 2_400;
 
 export function openAiImagePromptLimit(modelId: string): number {
+  if (modelId.startsWith("gpt-image-")) return 4_000;
   return OPENAI_IMAGE_PROMPT_MAX[modelId] ?? 4_000;
 }
 
@@ -65,12 +68,14 @@ export function buildImageGenerationPrompt(opts: {
 }): string {
   const userPrompt = opts.prompt.trim();
   const provider = getImageModelProvider(opts.modelId);
+  const openAiModel =
+    provider === "openai" ? resolveOpenAiImageModelId(opts.modelId, opts.hasSource) : opts.modelId;
   const context = opts.context?.trim();
 
   if (opts.hasSource) {
     const editLead = "Apply this change to the attached image:";
     if (provider === "openai") {
-      const limit = openAiImagePromptLimit(opts.modelId);
+      const limit = openAiImagePromptLimit(openAiModel);
       const core = `${editLead} ${userPrompt}`;
       if (!context) return fitPrompt(core, limit);
       const room = limit - core.length - 4;
@@ -89,7 +94,7 @@ export function buildImageGenerationPrompt(opts: {
   }
 
   if (provider === "openai") {
-    const limit = openAiImagePromptLimit(opts.modelId);
+    const limit = openAiImagePromptLimit(openAiModel);
     if (!context) return fitPrompt(userPrompt, limit);
     const room = limit - userPrompt.length - 4;
     if (room < 40) return fitPrompt(userPrompt, limit);

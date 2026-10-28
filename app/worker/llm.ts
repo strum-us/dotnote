@@ -15,6 +15,8 @@ import {
   IMAGE_INPUT_MIME_TYPES,
   isImageAspectRatio,
   isLlmProviderId,
+  isOpenAiGptImageModel,
+  resolveOpenAiImageModelId,
   thinkingControlFor,
   type AiSourceImagePayload,
   type LlmChatMessage,
@@ -48,11 +50,19 @@ async function sealKeys(env: Env, keys: ApiKeys): Promise<string> {
   return `aes:${iv}:${ciphertext}`;
 }
 
+function normalizeApiKey(key: string): string {
+  return key.trim().replace(/[\u200B-\u200D\uFEFF]/g, "");
+}
+
 async function openKeys(env: Env, sealed: string): Promise<ApiKeys> {
   try {
     if (sealed.startsWith("plain:")) return JSON.parse(sealed.slice(6)) as ApiKeys;
     if (sealed.startsWith("aes:")) {
-      const [, iv, ciphertext] = sealed.split(":");
+      const payload = sealed.slice(4);
+      const sep = payload.indexOf(":");
+      if (sep < 0) return {};
+      const iv = payload.slice(0, sep);
+      const ciphertext = payload.slice(sep + 1);
       return JSON.parse(await decrypt(env, ciphertext, iv)) as ApiKeys;
     }
   } catch {
@@ -117,9 +127,18 @@ async function loadSettings(env: Env, userId: string) {
     model: row.model || DEFAULT_LLM_MODEL,
     imageModel: resolveImageModel(row.imageModel),
     imageAspectRatio: resolveImageAspectRatio(row.imageAspectRatio),
-    keys: await openKeys(env, row.apiKeys),
+    keys: normalizeStoredKeys(await openKeys(env, row.apiKeys)),
     updatedAt: row.updatedAt,
   };
+}
+
+function normalizeStoredKeys(keys: ApiKeys): ApiKeys {
+  const out: ApiKeys = { ...keys };
+  for (const id of LLM_PROVIDER_IDS) {
+    const raw = out[id];
+    if (raw) out[id] = normalizeApiKey(raw);
+  }
+  return out;
 }
 
 const providerSchema = z.enum(LLM_PROVIDER_IDS as [LlmProviderId, ...LlmProviderId[]]);
@@ -248,14 +267,21 @@ async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<unknow
 
 async function providerFailure(name: string, res: Response): Promise<ProviderError> {
   const text = await res.text().catch(() => "");
-  let detail = text.slice(0, 300);
+  let detail = text.slice(0, 400);
   try {
-    const body = JSON.parse(text) as { error?: { message?: string } | string };
+    const body = JSON.parse(text) as { error?: { message?: string; code?: string } | string };
     detail = typeof body.error === "string" ? body.error : (body.error?.message ?? detail);
   } catch {
     // keep raw text
   }
-  if (res.status === 401 || res.status === 403) return new ProviderError(`${name} rejected the API key.`);
+  if (res.status === 401) {
+    return new ProviderError(
+      detail ? `${name}: ${detail}` : `${name} rejected the API key. Check Settings → AI and save the key again.`,
+    );
+  }
+  if (res.status === 403) {
+    return new ProviderError(detail ? `${name}: ${detail}` : `${name} denied access to this model or project.`);
+  }
   return new ProviderError(`${name} error ${res.status}${detail ? `: ${detail}` : ""}`);
 }
 
@@ -379,7 +405,7 @@ llmRoutes.patch(
       model: z.string().min(1).max(120).optional(),
       imageModel: z.string().min(1).max(120).optional(),
       imageAspectRatio: z.enum(IMAGE_ASPECT_RATIOS).optional(),
-      apiKeys: z.record(providerSchema, z.string().max(400)).optional(),
+      apiKeys: z.record(providerSchema, z.string().max(512)).optional(),
     }),
   ),
   async (c) => {
@@ -388,7 +414,7 @@ llmRoutes.patch(
     const current = await loadSettings(c.env, user.id);
     const keys: ApiKeys = { ...current.keys };
     for (const [provider, value] of Object.entries(patch.apiKeys ?? {}) as [LlmProviderId, string][]) {
-      const trimmed = value.trim();
+      const trimmed = normalizeApiKey(value);
       if (trimmed) keys[provider] = trimmed;
       else delete keys[provider];
     }
@@ -479,12 +505,44 @@ async function generateGeminiImage(
   return { mimeType, dataBase64, caption };
 }
 
-function resolveOpenAiImageSize(model: string, aspectRatio: string): "1024x1024" | "1792x1024" | "1024x1792" {
+function resolveOpenAiImageSize(model: string, aspectRatio: string): string {
   if (model === "dall-e-3") {
     if (aspectRatio === "16:9" || aspectRatio === "4:3") return "1792x1024";
     if (aspectRatio === "9:16" || aspectRatio === "3:4") return "1024x1792";
+    return "1024x1024";
+  }
+  if (isOpenAiGptImageModel(model)) {
+    if (aspectRatio === "16:9" || aspectRatio === "4:3") return "1536x1024";
+    if (aspectRatio === "9:16" || aspectRatio === "3:4") return "1024x1536";
+    return "1024x1024";
   }
   return "1024x1024";
+}
+
+type OpenAiImageItem = { b64_json?: string; url?: string; revised_prompt?: string };
+
+async function openAiImagePayload(item: OpenAiImageItem | undefined): Promise<{
+  mimeType: string;
+  dataBase64: string;
+  caption?: string;
+}> {
+  if (!item) {
+    throw new ProviderError("OpenAI did not return an image. Try rephrasing the prompt or switching models.");
+  }
+  const caption = item.revised_prompt?.trim() || undefined;
+  if (item.b64_json) {
+    return { mimeType: "image/png", dataBase64: item.b64_json, caption };
+  }
+  if (item.url) {
+    const img = await fetch(item.url);
+    if (!img.ok) throw new ProviderError("OpenAI returned an image URL that could not be fetched.");
+    const bytes = new Uint8Array(await img.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const mimeType = img.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
+    return { mimeType, dataBase64: btoa(binary), caption };
+  }
+  throw new ProviderError("OpenAI did not return an image. Try rephrasing the prompt or switching models.");
 }
 
 async function generateOpenAiImage(
@@ -496,6 +554,7 @@ async function generateOpenAiImage(
   sourceImage: AiSourceImagePayload | undefined,
   signal: AbortSignal,
 ): Promise<{ mimeType: string; dataBase64: string; caption?: string }> {
+  const apiModel = resolveOpenAiImageModelId(model, Boolean(sourceImage));
   const promptText = buildImageGenerationPrompt({
     prompt,
     context,
@@ -503,17 +562,17 @@ async function generateOpenAiImage(
     modelId: model,
   });
   if (sourceImage) {
-    if (model !== "dall-e-2") throw new ProviderError("image_input_unsupported");
+    if (model === "dall-e-3") throw new ProviderError("image_input_unsupported");
+    if (model !== "dall-e-2" && !isOpenAiGptImageModel(apiModel)) throw new ProviderError("image_input_unsupported");
     const binary = atob(sourceImage.dataBase64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const ext = sourceImage.mimeType === "image/jpeg" ? "jpg" : sourceImage.mimeType === "image/webp" ? "webp" : "png";
     const form = new FormData();
-    form.set("model", model);
+    form.set("model", apiModel);
     form.set("prompt", promptText);
     form.set("n", "1");
-    form.set("size", "1024x1024");
-    form.set("response_format", "b64_json");
+    form.set("size", resolveOpenAiImageSize(apiModel, aspectRatio));
     form.set("image", new File([bytes], `source.${ext}`, { type: sourceImage.mimeType }));
     const res = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
@@ -522,36 +581,23 @@ async function generateOpenAiImage(
       signal,
     });
     if (!res.ok) throw await providerFailure("OpenAI", res);
-    const body = (await res.json()) as { data?: { b64_json?: string; revised_prompt?: string }[] };
-    const item = body.data?.[0];
-    if (!item?.b64_json) {
-      throw new ProviderError("OpenAI did not return an image. Try rephrasing the prompt or switching models.");
-    }
-    return { mimeType: "image/png", dataBase64: item.b64_json, caption: item.revised_prompt?.trim() || undefined };
+    const body = (await res.json()) as { data?: OpenAiImageItem[] };
+    return openAiImagePayload(body.data?.[0]);
   }
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model,
+      model: apiModel,
       prompt: promptText,
-      size: resolveOpenAiImageSize(model, aspectRatio),
-      response_format: "b64_json",
+      size: resolveOpenAiImageSize(apiModel, aspectRatio),
       n: 1,
     }),
     signal,
   });
   if (!res.ok) throw await providerFailure("OpenAI", res);
-  const body = (await res.json()) as { data?: { b64_json?: string; revised_prompt?: string }[] };
-  const item = body.data?.[0];
-  if (!item?.b64_json) {
-    throw new ProviderError("OpenAI did not return an image. Try rephrasing the prompt or switching models.");
-  }
-  return {
-    mimeType: "image/png",
-    dataBase64: item.b64_json,
-    caption: item.revised_prompt?.trim() || undefined,
-  };
+  const body = (await res.json()) as { data?: OpenAiImageItem[] };
+  return openAiImagePayload(body.data?.[0]);
 }
 
 llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), async (c) => {
@@ -562,7 +608,7 @@ llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), asyn
   if (input.sourceImage && modelMeta && !modelMeta.supportsImageInput) {
     return c.json({ error: "image_input_unsupported" }, 400);
   }
-  const apiKey = s.keys[provider]?.trim();
+  const apiKey = normalizeApiKey(s.keys[provider] ?? "");
   if (!apiKey) return c.json({ error: `no_${provider}_key` }, 400);
 
   const upstream = new AbortController();

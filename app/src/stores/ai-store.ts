@@ -50,6 +50,8 @@ type JobRuntime = {
 const MODEL_TAU_MS: Record<string, number> = {
   "gemini-2.5-flash-image": 5_000,
   "gemini-3.1-flash-image": 8_000,
+  "gpt-image-2.5-flare": 10_000,
+  "gpt-image-2.5-sunburst": 14_000,
   "dall-e-3": 12_000,
   "dall-e-2": 8_000,
 };

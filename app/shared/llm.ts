@@ -291,20 +291,45 @@ export const IMAGE_MODEL_CATALOG: ImageModelOption[] = [
     supportsImageInput: true,
   },
   {
-    id: "dall-e-3",
-    label: "DALL·E 3",
+    id: "gpt-image-2.5-flare",
+    label: "GPT Image 2.5 Flare",
     provider: "openai",
-    notes: "OpenAI flagship · new images only",
+    notes: "OpenAI default · fast generation and edits",
+    supportsImageInput: true,
+  },
+  {
+    id: "gpt-image-2.5-sunburst",
+    label: "GPT Image 2.5 Sunburst",
+    provider: "openai",
+    notes: "Highest editing precision",
+    supportsImageInput: true,
+  },
+  {
+    id: "dall-e-3",
+    label: "DALL·E 3 (legacy)",
+    provider: "openai",
+    notes: "Retired by OpenAI — Dotnote uses GPT Image 2.5 Flare instead",
     supportsImageInput: false,
   },
   {
     id: "dall-e-2",
-    label: "DALL·E 2",
+    label: "DALL·E 2 (legacy)",
     provider: "openai",
-    notes: "Square 1024×1024 · can edit an existing image",
+    notes: "Retired — Dotnote maps to GPT Image 2.5",
     supportsImageInput: true,
   },
 ];
+
+export function isOpenAiGptImageModel(modelId: string): boolean {
+  return modelId.startsWith("gpt-image-");
+}
+
+/** Image API model id to call (maps retired DALL·E selections). */
+export function resolveOpenAiImageModelId(storedModelId: string, hasSourceImage: boolean): string {
+  if (storedModelId === "dall-e-3") return "gpt-image-2.5-flare";
+  if (storedModelId === "dall-e-2") return hasSourceImage ? "gpt-image-2.5-sunburst" : "gpt-image-2.5-flare";
+  return storedModelId;
+}
 
 export function findImageModel(modelId: string): ImageModelOption | undefined {
   return IMAGE_MODEL_CATALOG.find((m) => m.id === modelId);
