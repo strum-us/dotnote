@@ -17,7 +17,7 @@ import type {
   WorkspaceManifest,
 } from "@shared/types";
 import type { DiagnosticsStatus } from "@shared/diagnostics";
-import type { LlmSettingsView, UpdateLlmSettings } from "@shared/llm";
+import type { AiLogPeriod, AiLogsResponse, LlmSettingsView, UpdateLlmSettings } from "@shared/llm";
 
 export type { TreeNode };
 
@@ -197,6 +197,11 @@ export const llmApi = {
   settings: () => request<{ settings: LlmSettingsView }>("/api/llm/settings"),
   update: (patch: UpdateLlmSettings) =>
     request<{ settings: LlmSettingsView }>("/api/llm/settings", { method: "PATCH", body: JSON.stringify(patch) }),
+  logs: (opts: { period: AiLogPeriod; limit?: number; cursor?: string | null }) => {
+    const params = new URLSearchParams({ period: opts.period, limit: String(opts.limit ?? 20) });
+    if (opts.cursor) params.set("cursor", opts.cursor);
+    return request<AiLogsResponse>(`/api/llm/logs?${params.toString()}`);
+  },
 };
 
 export const noteApi = {

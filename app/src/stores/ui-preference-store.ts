@@ -1,7 +1,7 @@
 import {
   UI_PREFERENCE_BUILD_VERSION,
   UI_PREFERENCE_SCHEMA_VERSION,
-} from "@/lib/ui-preference/build-version";
+} from "@/lib/app-version";
 import { createEmptyWorkspacePref } from "@/lib/ui-preference/defaults";
 import { migrateUIPreferenceData } from "@/lib/ui-preference/migrate";
 import { isClient } from "@/lib/is-client";

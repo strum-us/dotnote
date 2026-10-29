@@ -1,4 +1,4 @@
-import { UI_PREFERENCE_SCHEMA_VERSION } from "@/lib/ui-preference/build-version";
+import { UI_PREFERENCE_SCHEMA_VERSION } from "@/lib/app-version";
 import { createEmptyWorkspacePref } from "@/lib/ui-preference/defaults";
 import type { WorkspaceUIPreferences } from "@/lib/types/ui-preference";
 

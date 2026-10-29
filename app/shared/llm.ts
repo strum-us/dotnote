@@ -406,3 +406,61 @@ export type LlmChatMessage = { role: "user" | "assistant"; content: string };
 
 /** One line of the `/api/llm/generate` NDJSON stream. */
 export type LlmStreamEvent = { type: "text"; text: string } | { type: "error"; message: string } | { type: "done" };
+
+export type AiLogPeriod = "7d" | "30d" | "all";
+
+export type AiLogType = "text" | "image";
+
+export type AiLogStatus = "success" | "error";
+
+export type AiLogItem = {
+  id: string;
+  type: AiLogType;
+  provider: LlmProviderId;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  inputCostUsd: number;
+  outputCostUsd: number;
+  totalCostUsd: number;
+  inputData: string;
+  outputData: string | null;
+  status: AiLogStatus;
+  errorMessage: string | null;
+  durationMs: number;
+  createdAt: string;
+};
+
+export type AiLogsSummary = {
+  totalCostUsd: number;
+  totalCount: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+};
+
+export type AiLogsResponse = {
+  logs: AiLogItem[];
+  nextCursor: string | null;
+  summary: AiLogsSummary;
+};
+
+/** Rough token estimate when providers omit usage metadata. */
+export function estimateTokenCount(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return Math.max(1, Math.ceil(trimmed.length / 4));
+}
+
+export function calculateLlmCost(
+  provider: LlmProviderId,
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+): { inputCostUsd: number; outputCostUsd: number; totalCostUsd: number } {
+  const meta = findLlmModel(provider, modelId);
+  const inputPer1M = meta?.inputPer1MUsd ?? 0;
+  const outputPer1M = meta?.outputPer1MUsd ?? 0;
+  const inputCostUsd = (inputTokens / 1_000_000) * inputPer1M;
+  const outputCostUsd = (outputTokens / 1_000_000) * outputPer1M;
+  return { inputCostUsd, outputCostUsd, totalCostUsd: inputCostUsd + outputCostUsd };
+}

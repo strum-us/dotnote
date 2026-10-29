@@ -10,7 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldCheck } from "@/components/ui/field-check";
 import { CLIENT_VERSION } from "@/lib/app-version";
-import { openSettingsSection } from "@/lib/settings-route";
+import { useNavigate } from "react-router-dom";
+import { settingsPath } from "@/routes/paths";
 import { updateStatusSummary } from "@/lib/update-summary";
 import { cn } from "@/lib/utils";
 import { cloudflareStore } from "@/stores/cloudflare-store";
@@ -35,6 +36,7 @@ function JobProgress() {
 
 /** Settings › Updates: version, manual check, self-update, rollback, and release notes. */
 export const UpdateSettings = observer(function UpdateSettings() {
+  const navigate = useNavigate();
   const [dialog, setDialog] = useState<UpdateDialogIntent | null>(null);
   const [confirmRollback, setConfirmRollback] = useState(false);
 
@@ -144,7 +146,7 @@ export const UpdateSettings = observer(function UpdateSettings() {
               </Button>
             ) : null}
             {needsInstaller ? (
-              <Button size="sm" onClick={() => openSettingsSection("cloudflare")}>
+              <Button size="sm" onClick={() => navigate(settingsPath("cloudflare"))}>
                 Connect from the installer…
               </Button>
             ) : null}

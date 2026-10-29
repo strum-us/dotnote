@@ -14,7 +14,8 @@ import { stripAiJobImages } from "@/lib/ai-job-markdown";
 import { collectTransferFiles, transferHasFiles } from "@/lib/image-optimize";
 import { resolveMarkdownAssetHref } from "@/lib/page-assets-client";
 import { pathForNoteId } from "@/lib/search-nav";
-import { openSettingsSection } from "@/lib/settings-route";
+import { useNavigate } from "react-router-dom";
+import { aiSettingsImagePath, aiSettingsTextPath } from "@/routes/paths";
 import {
   ingestPageFile,
   markdownForIngestedFile,
@@ -180,15 +181,17 @@ const BlockEditor = observer(function BlockEditor({
     [editor],
   );
 
+  const navigate = useNavigate();
+
   const openAiSettings = useCallback(() => {
     noteStore.checkpoint();
-    openSettingsSection("ai");
-  }, []);
+    navigate(aiSettingsTextPath());
+  }, [navigate]);
 
   const openAiImageSettings = useCallback(() => {
     noteStore.checkpoint();
-    openSettingsSection("ai-image");
-  }, []);
+    navigate(aiSettingsImagePath());
+  }, [navigate]);
 
   // ⌘J / Ctrl+J toggles the AI bar while the note has focus.
   useEffect(() => {

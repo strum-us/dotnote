@@ -37,14 +37,3 @@ export function notePath(workspaceId: string, noteId?: string | null): string {
   return `/${ws}/${encodeURIComponent(noteId)}`;
 }
 
-export function pushNoteRoute(workspaceId: string, noteId: string): void {
-  const next = notePath(workspaceId, noteId);
-  if (window.location.pathname === next) return;
-  window.history.pushState(null, "", next);
-}
-
-export function replaceNoteRoute(workspaceId: string, noteId: string | null): void {
-  const next = notePath(workspaceId, noteId);
-  if (window.location.pathname === next) return;
-  window.history.replaceState(null, "", next);
-}

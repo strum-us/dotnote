@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useLocation } from "react-router-dom";
 import { observer } from "mobx-react-lite";
 import { authStore } from "@/stores/auth-store";
 import { DotnoteMark } from "@/components/DotnoteMark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AUTH_CREATE_PATH, AUTH_LOGIN_PATH, isAuthCreatePath } from "@/lib/auth-route";
+import { AUTH_CREATE_PATH, AUTH_LOGIN_PATH, isAuthCreatePath } from "@/routes/paths";
 import { FieldCheck } from "@/components/ui/field-check";
 
 function resetHref(installerOrigin: string): string | null {
@@ -27,18 +28,10 @@ export const AuthScreen = observer(function AuthScreen() {
   const [diagnosticsConsent, setDiagnosticsConsent] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [authPath, setAuthPath] = useState(() =>
-    typeof window !== "undefined" ? window.location.pathname : "/",
-  );
+  const authPath = useLocation().pathname;
 
   useEffect(() => {
     void authStore.loadSetup();
-  }, []);
-
-  useEffect(() => {
-    const sync = () => setAuthPath(window.location.pathname);
-    window.addEventListener("popstate", sync);
-    return () => window.removeEventListener("popstate", sync);
   }, []);
 
   const setup = authStore.setup;

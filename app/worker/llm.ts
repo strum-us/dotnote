@@ -19,6 +19,11 @@ import {
   isOpenAiGptImageModel,
   resolveOpenAiImageModelId,
   thinkingControlFor,
+  calculateLlmCost,
+  estimateTokenCount,
+  type AiLogPeriod,
+  type AiLogStatus,
+  type AiLogType,
   type AiSourceImagePayload,
   type LlmChatMessage,
   type LlmProviderId,
@@ -395,6 +400,81 @@ function streamProvider(
   }
 }
 
+const LOG_TEXT_MAX = 120_000;
+
+function truncateLogText(text: string, max = LOG_TEXT_MAX): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}\n… [truncated]`;
+}
+
+function messagesTokenEstimate(messages: LlmChatMessage[]): number {
+  return messages.reduce((sum, m) => sum + estimateTokenCount(m.content), 0);
+}
+
+async function insertAiLog(
+  env: Env,
+  userId: string,
+  row: {
+    type: AiLogType;
+    provider: LlmProviderId;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    inputCostUsd: number;
+    outputCostUsd: number;
+    totalCostUsd: number;
+    inputData: string;
+    outputData: string | null;
+    status: AiLogStatus;
+    errorMessage: string | null;
+    durationMs: number;
+  },
+): Promise<void> {
+  const id = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO ai_logs (
+      id, user_id, type, provider, model,
+      input_tokens, output_tokens, input_cost_usd, output_cost_usd, total_cost_usd,
+      input_data, output_data, status, error_message, duration_ms, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      id,
+      userId,
+      row.type,
+      row.provider,
+      row.model,
+      row.inputTokens,
+      row.outputTokens,
+      row.inputCostUsd,
+      row.outputCostUsd,
+      row.totalCostUsd,
+      truncateLogText(row.inputData),
+      row.outputData ? truncateLogText(row.outputData) : null,
+      row.status,
+      row.errorMessage,
+      row.durationMs,
+      createdAt,
+    )
+    .run();
+}
+
+function summarizeGenerateInput(input: GenerateInput): string {
+  const parts: string[] = [];
+  if (input.document) parts.push(`<note>\n${input.document}\n</note>`);
+  if (input.selection) {
+    parts.push(`<selection kind="${input.selection.kind}">\n${input.selection.markdown}\n</selection>`);
+  } else if (input.cursorBlock !== undefined) {
+    parts.push(`<cursor_block>\n${input.cursorBlock}\n</cursor_block>`);
+  }
+  for (const turn of input.turns) {
+    parts.push(`<instruction>\n${turn.instruction}\n</instruction>`);
+    if (turn.output !== undefined) parts.push(`<assistant>\n${turn.output}\n</assistant>`);
+  }
+  return parts.join("\n\n");
+}
+
 export const llmRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 llmRoutes.get("/settings", async (c) => {
@@ -613,9 +693,90 @@ async function generateOpenAiImage(
   return openAiImagePayload(body.data?.[0]);
 }
 
+llmRoutes.get("/logs", async (c) => {
+  const user = c.get("user");
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 20), 1), 50);
+  const cursor = c.req.query("cursor")?.trim() || null;
+  const period = (c.req.query("period") ?? "all") as AiLogPeriod;
+  const dateFilter =
+    period === "7d"
+      ? "AND datetime(created_at) >= datetime('now', '-7 days')"
+      : period === "30d"
+        ? "AND datetime(created_at) >= datetime('now', '-30 days')"
+        : "";
+
+  type SummaryRow = {
+    totalCostUsd: number;
+    totalCount: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+  };
+
+  const summaryRow = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(total_cost_usd), 0) as totalCostUsd,
+            COUNT(*) as totalCount,
+            COALESCE(SUM(input_tokens), 0) as totalInputTokens,
+            COALESCE(SUM(output_tokens), 0) as totalOutputTokens
+     FROM ai_logs WHERE user_id = ? ${dateFilter}`,
+  )
+    .bind(user.id)
+    .first<SummaryRow>();
+
+  type LogRow = {
+    id: string;
+    type: AiLogType;
+    provider: LlmProviderId;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    inputCostUsd: number;
+    outputCostUsd: number;
+    totalCostUsd: number;
+    inputData: string;
+    outputData: string | null;
+    status: AiLogStatus;
+    errorMessage: string | null;
+    durationMs: number;
+    createdAt: string;
+  };
+
+  let query = `SELECT id, type, provider, model,
+    input_tokens as inputTokens, output_tokens as outputTokens,
+    input_cost_usd as inputCostUsd, output_cost_usd as outputCostUsd,
+    total_cost_usd as totalCostUsd, input_data as inputData, output_data as outputData,
+    status, error_message as errorMessage, duration_ms as durationMs, created_at as createdAt
+    FROM ai_logs WHERE user_id = ? ${dateFilter}`;
+  const binds: (string | number)[] = [user.id];
+  if (cursor) {
+    query += " AND created_at < ?";
+    binds.push(cursor);
+  }
+  query += " ORDER BY created_at DESC LIMIT ?";
+  binds.push(limit + 1);
+
+  const { results } = await c.env.DB.prepare(query).bind(...binds).all<LogRow>();
+  const rows = results ?? [];
+  const hasMore = rows.length > limit;
+  const logs = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore && logs.length > 0 ? logs[logs.length - 1].createdAt : null;
+
+  return c.json({
+    logs,
+    nextCursor,
+    summary: summaryRow ?? {
+      totalCostUsd: 0,
+      totalCount: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+    },
+  });
+});
+
 llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), async (c) => {
+  const started = Date.now();
   const input = c.req.valid("json");
-  const s = await loadSettings(c.env, c.get("user").id);
+  const user = c.get("user");
+  const s = await loadSettings(c.env, user.id);
   const provider = getImageModelProvider(s.imageModel);
   const modelMeta = findImageModel(s.imageModel);
   if (input.sourceImage && modelMeta && !modelMeta.supportsImageInput) {
@@ -628,6 +789,12 @@ llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), asyn
 
   const upstream = new AbortController();
   c.req.raw.signal?.addEventListener("abort", () => upstream.abort());
+  const inputSummary = [
+    input.prompt,
+    input.context ? `\n<context>\n${input.context}\n</context>` : "",
+    input.sourceImage ? `\n[source image: ${input.sourceImage.mimeType}]` : "",
+  ].join("");
+  const inputTokens = estimateTokenCount(inputSummary);
   try {
     const result =
       provider === "openai"
@@ -649,17 +816,49 @@ llmRoutes.post("/images/generate", zValidator("json", imageGenerateSchema), asyn
             input.sourceImage,
             upstream.signal,
           );
+    const outputText = result.caption ?? `[${result.mimeType} image, ${result.dataBase64.length} base64 chars]`;
+    const outputTokens = estimateTokenCount(outputText);
+    const costs = calculateLlmCost(provider, s.imageModel, inputTokens, outputTokens);
+    await insertAiLog(c.env, user.id, {
+      type: "image",
+      provider,
+      model: s.imageModel,
+      inputTokens,
+      outputTokens,
+      ...costs,
+      inputData: inputSummary,
+      outputData: outputText,
+      status: "success",
+      errorMessage: null,
+      durationMs: Date.now() - started,
+    });
     return c.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Image generation failed.";
+    const costs = calculateLlmCost(provider, s.imageModel, inputTokens, 0);
+    await insertAiLog(c.env, user.id, {
+      type: "image",
+      provider,
+      model: s.imageModel,
+      inputTokens,
+      outputTokens: 0,
+      ...costs,
+      inputData: inputSummary,
+      outputData: null,
+      status: "error",
+      errorMessage: message,
+      durationMs: Date.now() - started,
+    }).catch(() => {});
     const status = message === "image_input_unsupported" ? 400 : err instanceof ProviderError && message.includes("rate") ? 429 : 502;
     return c.json({ error: message }, status);
   }
 });
 
 llmRoutes.post("/generate", zValidator("json", generateSchema), async (c) => {
+  const started = Date.now();
   const input = c.req.valid("json");
-  const s = await loadSettings(c.env, c.get("user").id);
+  const user = c.get("user");
+  const s = await loadSettings(c.env, user.id);
   if (thinkingControlFor(s.activeProvider, s.model) === "always-on") {
     return c.json({ error: "thinking_required" }, 400);
   }
@@ -667,6 +866,8 @@ llmRoutes.post("/generate", zValidator("json", generateSchema), async (c) => {
   if (!apiKey) return c.json({ error: "no_api_key" }, 400);
 
   const messages = buildMessages(input);
+  const inputData = summarizeGenerateInput(input);
+  const inputTokens = messagesTokenEstimate(messages) + estimateTokenCount(SYSTEM_PROMPT);
   const upstream = new AbortController();
   c.req.raw.signal?.addEventListener("abort", () => upstream.abort());
   const encoder = new TextEncoder();
@@ -676,14 +877,35 @@ llmRoutes.post("/generate", zValidator("json", generateSchema), async (c) => {
       const send = (event: LlmStreamEvent) => {
         if (!upstream.signal.aborted) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       };
+      let outputText = "";
+      let logStatus: AiLogStatus = "success";
+      let errorMessage: string | null = null;
       try {
         for await (const text of streamProvider(s.activeProvider, apiKey, s.model, messages, upstream.signal)) {
+          outputText += text;
           send({ type: "text", text });
         }
         send({ type: "done" });
       } catch (err) {
-        send({ type: "error", message: err instanceof Error ? err.message : "The AI request failed." });
+        logStatus = "error";
+        errorMessage = err instanceof Error ? err.message : "The AI request failed.";
+        send({ type: "error", message: errorMessage });
       } finally {
+        const outputTokens = estimateTokenCount(outputText);
+        const costs = calculateLlmCost(s.activeProvider, s.model, inputTokens, outputTokens);
+        await insertAiLog(c.env, user.id, {
+          type: "text",
+          provider: s.activeProvider,
+          model: s.model,
+          inputTokens,
+          outputTokens,
+          ...costs,
+          inputData,
+          outputData: outputText || null,
+          status: logStatus,
+          errorMessage,
+          durationMs: Date.now() - started,
+        }).catch(() => {});
         if (!upstream.signal.aborted) controller.close();
       }
     },
