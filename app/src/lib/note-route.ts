@@ -37,3 +37,20 @@ export function notePath(workspaceId: string, noteId?: string | null): string {
   return `/${ws}/${encodeURIComponent(noteId)}`;
 }
 
+/** `window.location.pathname` with the Vite base removed. React Router already does this. */
+export function locationAppPath(): string {
+  if (typeof window === "undefined") return "/";
+  const path = window.location.pathname;
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  if (!base) return path;
+  if (path === base) return "/";
+  if (path.startsWith(`${base}/`)) return path.slice(base.length) || "/";
+  return path;
+}
+
+/** Full-page navigations ignore the router basename, so prefix the base ourselves. */
+export function absoluteAppPath(path: string): string {
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+

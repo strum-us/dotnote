@@ -4,9 +4,7 @@
 
 [Website](https://dotnote.cloud) · [Try the demo](https://strum-us.github.io/dotnote-demo/entry-sample)
 
-<video src="https://github.com/strum-us/dotnote/raw/main/docs/media/dotnote-intro-light.mp4" poster="docs/media/dotnote-intro-light-poster.jpg" width="100%" controls playsinline></video>
-
-[![Dotnote](docs/media/dotnote-intro-light-poster.jpg)](https://github.com/strum-us/dotnote/raw/main/docs/media/dotnote-intro-light.mp4)
+![Dotnote](docs/media/dotnote-intro-light.gif)
 
 Dotnote is a local-first markdown notes app that runs in **your own Cloudflare account**. Your notes are plain `.md` files in your R2 bucket — no notes cloud operated by us, no per-seat subscription, no proprietary vault format.
 

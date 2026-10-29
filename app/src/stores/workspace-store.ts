@@ -18,7 +18,7 @@ import {
 import { noteStore } from "@/stores/note-store";
 import { noteTabsStore } from "@/stores/note-tabs-store";
 import { manifestCacheKey, syncStore } from "@/stores/sync-store";
-import { parseNotePath } from "@/lib/note-route";
+import { locationAppPath, parseNotePath } from "@/lib/note-route";
 import { uiPreferenceStore } from "@/stores/ui-preference-store";
 
 const ACTIVE_WORKSPACE_KEY = "dotnote-active-workspace";
@@ -198,7 +198,7 @@ class WorkspaceStore {
   /** Workspace to hydrate first: URL, then remembered id, then cached list. */
   private resolveInitialWorkspaceId(cachedWorkspaces: Workspace[] | null): string | null {
     if (this.activeId && this.workspaces.some((w) => w.id === this.activeId)) return this.activeId;
-    const fromUrl = typeof window !== "undefined" ? parseNotePath(window.location.pathname) : null;
+    const fromUrl = typeof window !== "undefined" ? parseNotePath(locationAppPath()) : null;
     if (fromUrl) return fromUrl.workspaceId;
     let remembered: string | null = null;
     try {
@@ -232,7 +232,7 @@ class WorkspaceStore {
   private pickActive(): void {
     if (this.activeId && this.workspaces.some((w) => w.id === this.activeId)) return;
     const fromUrl =
-      typeof window !== "undefined" ? parseNotePath(window.location.pathname) : null;
+      typeof window !== "undefined" ? parseNotePath(locationAppPath()) : null;
     if (fromUrl) {
       this.activate(fromUrl.workspaceId);
       return;

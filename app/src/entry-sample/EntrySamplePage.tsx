@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { DotnoteMark } from "@/components/DotnoteMark";
-import { notePath } from "@/lib/note-route";
+import { absoluteAppPath, notePath } from "@/lib/note-route";
 import { entrySampleEnter, EntrySampleError } from "@/entry-sample/entry-sample-api";
 import { authStore } from "@/stores/auth-store";
 import type { ParsedEntrySamplePath } from "@/entry-sample/entry-sample-route";
@@ -35,7 +35,7 @@ export function EntrySamplePage({ hint }: { hint: ParsedEntrySamplePath }) {
       .then(({ user, workspaceId }) => {
         if (cancelled) return;
         authStore.primeUser(user);
-        window.location.replace(redirectTarget(workspaceId, hint));
+        window.location.replace(absoluteAppPath(redirectTarget(workspaceId, hint)));
       })
       .catch((error: unknown) => {
         if (cancelled) return;
