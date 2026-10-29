@@ -12,7 +12,7 @@ Prerequisites: Node.js 22+, pnpm 9.12+, and a Cloudflare account for deployment 
 
 ```bash
 pnpm install
-cp app/wrangler.example.jsonc app/wrangler.jsonc   # fill in your own resource IDs
+cp app/wrangler.example.jsonc app/wrangler.jsonc   # fill in your own resource IDs (OpenNext / Workers)
 pnpm dev
 ```
 
@@ -26,7 +26,7 @@ See the "Local development" section of [README.md](./README.md) for ports and th
   - Only add: new tables, columns, and indexes. The previous version keeps serving on top of the migrated database for a minute, and a rollback runs it there indefinitely.
   - Make every statement safe to run twice (`IF NOT EXISTS`, `INSERT OR IGNORE`). Wrangler-deployed instances may apply a file the updater already ran.
 - Run the checks that apply to your change:
-  - App: `pnpm --filter dotnote-app run build`
+  - App: `pnpm --filter dotnote-app run build:cf` (Cloudflare: `SKIP_DEPENDENCY_INSTALL=1`, build command `pnpm run build:cf` from `app/`)
   - App tests: `cd app && node --experimental-strip-types --test test/*.test.ts`
   - Installer: `pnpm --filter dotnote-installer run typecheck`
 - Releases are signed (see `docs/self-update.md`). To pack one yourself, create a key with `pnpm release:key` first.

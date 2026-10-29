@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Plus } from "lucide-react";
 import { observer } from "mobx-react-lite";
-import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
-import type { ShellOutletContext } from "@/routes/AppShell";
+import { useLocation, useNavigate, useParams } from "@/lib/next-router-compat";
+import { useShellOutletContext } from "@/lib/shell-context";
 
 import { NoteEditor } from "@/components/NoteEditor";
 import { TreeSidebar } from "@/components/TreeSidebar";
@@ -36,7 +36,7 @@ function firstNoteId(nodes: TreeNode[]): string | null {
 }
 
 export const WorkspaceRoute = observer(function WorkspaceRoute() {
-  const { openWorkspaceDialog } = useOutletContext<ShellOutletContext>();
+  const { openWorkspaceDialog } = useShellOutletContext();
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();

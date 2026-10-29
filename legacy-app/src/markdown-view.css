@@ -1,0 +1,7 @@
+.wmde-markdown {
+  color: var(--ink);
+}
+
+.wmde-markdown a {
+  color: var(--accent-color);
+}

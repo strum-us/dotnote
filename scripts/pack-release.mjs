@@ -214,7 +214,7 @@ if (existsSync(notesFile)) {
   console.warn(`No release notes at release-notes/${pkg.version}.md; the update dialog will show none.`);
 }
 
-run("pnpm", ["--filter", "dotnote-app", "build"], root);
+run("pnpm", ["--filter", "dotnote-app", "run", "build:cf"], root);
 await rm(bundleDir, { recursive: true, force: true });
 await mkdir(bundleDir, { recursive: true });
 run(
@@ -238,7 +238,7 @@ const workerFile = bundleFiles.includes("index.js") ? "index.js" : bundleFiles[0
 if (!workerFile) fail("wrangler did not write a worker bundle");
 const workerBytes = await readFile(path.join(bundleDir, workerFile));
 
-const distDir = path.join(appDir, "dist");
+const distDir = path.join(appDir, ".open-next", "assets");
 const files = await walk(distDir);
 const assets = [];
 const byHash = new Map();

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { observer } from "mobx-react-lite";
-import { Outlet, useNavigate } from "react-router-dom";
+import { useNavigate } from "@/lib/next-router-compat";
+import { ShellProvider, type ShellOutletContext } from "@/lib/shell-context";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 
 import { AuthScreen } from "@/components/AuthScreen";
@@ -17,11 +19,9 @@ import { syncStore } from "@/stores/sync-store";
 import { updateStore } from "@/stores/update-store";
 import { workspaceStore } from "@/stores/workspace-store";
 
-export type ShellOutletContext = {
-  openWorkspaceDialog: () => void;
-};
+export type { ShellOutletContext };
 
-export const AppShell = observer(function AppShell() {
+export const AppShell = observer(function AppShell({ children }: { children: ReactNode }) {
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const navigate = useNavigate();
   const userId = authStore.user?.id ?? null;
@@ -71,7 +71,9 @@ export const AppShell = observer(function AppShell() {
       <div className="flex h-full min-h-0 flex-col bg-canvas text-ink">
         <ImportStatusBar />
         <div className="flex min-h-0 flex-1">
-          <Outlet context={{ openWorkspaceDialog: () => setWorkspaceDialog(true) } satisfies ShellOutletContext} />
+          <ShellProvider value={{ openWorkspaceDialog: () => setWorkspaceDialog(true) }}>
+            {children}
+          </ShellProvider>
         </div>
         <NewWorkspaceDialog
           open={workspaceDialog}

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldCheck } from "@/components/ui/field-check";
 import { CLIENT_VERSION } from "@/lib/app-version";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "@/lib/next-router-compat";
 import { settingsPath } from "@/routes/paths";
 import { updateStatusSummary } from "@/lib/update-summary";
 import { cn } from "@/lib/utils";

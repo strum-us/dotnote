@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink } from "@/lib/next-router-compat";
+import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -14,7 +15,7 @@ const tabClass = ({ isActive }: { isActive: boolean }) =>
     isActive && "border-b-2 border-b-accent-color bg-well font-semibold text-ink",
   );
 
-export function AiSettingsLayout() {
+export function AiSettingsLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-divider bg-panel-header px-6 pt-4 pb-0">
@@ -31,7 +32,7 @@ export function AiSettingsLayout() {
         </nav>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        <Outlet />
+        {children}
       </div>
     </div>
   );

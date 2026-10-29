@@ -4,7 +4,7 @@ This folder is the **public** Dotnote source tree (a separate git repository fro
 
 | Included | Excluded (stay in private `dotnote-ops`) |
 |----------|------------------------------------------|
-| `app/`, `installer/` | `hq/`, `website/` (dotnote.cloud) |
+| `app/`, `legacy-app/`, `installer/` | `hq/`, `website/` (dotnote.cloud) |
 | `scripts/pack-release.mjs`, `release-notes/` | `design/`, `PRODUCT.md` |
 | `docs/`, `README.md` | `scripts/create-installer-oauth-client.mjs` |
 | `LICENSE.md`, `TRADEMARKS.md`, `CONTRIBUTING.md` | Production `wrangler.jsonc`, `.dev.vars` |

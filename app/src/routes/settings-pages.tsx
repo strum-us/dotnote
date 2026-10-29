@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "@/lib/next-router-compat";
 
 import { AccountSettings } from "@/components/settings/sections/AccountSettings";
 import { GeneralSettings } from "@/components/settings/sections/GeneralSettings";

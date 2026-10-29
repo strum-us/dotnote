@@ -43,6 +43,8 @@ pnpm --filter dotnote-app exec wrangler d1 migrations apply dotnote-index --remo
 pnpm deploy:app
 ```
 
+(`deploy:app` runs `build:cf` then `opennextjs-cloudflare deploy`, same pattern as Fleetpad. On Cloudflare CI set `SKIP_DEPENDENCY_INSTALL=1` and use `pnpm run build:cf` as the build command.)
+
 Open the deployed Worker URL and create the owner account.
 
 Notes on configuration (`app/wrangler.jsonc`):
@@ -143,12 +145,19 @@ cp app/wrangler.example.jsonc app/wrangler.jsonc
 pnpm dev
 ```
 
-This starts the app worker and frontend together:
+This starts the Next.js app (UI + `/api/*` on the same origin):
 
 | Service | URL |
 |---|---|
-| Frontend (Vite) | http://127.0.0.1:39220 |
-| App worker (API) | http://127.0.0.1:8787 |
+| Dotnote (Next.js) | http://127.0.0.1:39220 |
+
+For a full Cloudflare Workers preview (OpenNext bundle + Wrangler):
+
+```bash
+pnpm preview:app
+```
+
+The legacy Vite SPA is kept under `legacy-app/` (`pnpm dev:legacy`) for reference only.
 
 Optional: run the guided-install worker locally:
 
@@ -164,7 +173,8 @@ Local D1 migrations are applied automatically by the dev scripts. Local data sta
 
 | Path | What it is |
 |---|---|
-| `app/` | The Dotnote web app and its Cloudflare Worker API |
+| `app/` | Dotnote on Next.js (App Router) + OpenNext on Cloudflare Workers |
+| `legacy-app/` | Previous Vite SPA + Hono worker (frozen reference) |
 | `installer/` | The guided-install worker (Cloudflare OAuth → deploy into a user's account) |
 | `scripts/pack-release.mjs` | Builds the release the installer deploys and running Dotnotes update to |
 | `docs/` | User and license documentation |

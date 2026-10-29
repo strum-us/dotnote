@@ -1,5 +1,6 @@
 import { observer } from "mobx-react-lite";
-import { Outlet, useNavigate } from "react-router-dom";
+import { useNavigate } from "@/lib/next-router-compat";
+import type { ReactNode } from "react";
 
 import { SettingsSidebar } from "@/components/settings/SettingsSidebar";
 import { noteStore } from "@/stores/note-store";
@@ -17,7 +18,7 @@ function settingsReturnPath(): string {
   return "/";
 }
 
-export const SettingsLayout = observer(function SettingsLayout() {
+export const SettingsLayout = observer(function SettingsLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -34,7 +35,7 @@ export const SettingsLayout = observer(function SettingsLayout() {
     <div className="flex min-h-0 min-w-0 flex-1">
       <SettingsSidebar onBack={closeSettings} />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-well">
-        <Outlet />
+        {children}
       </main>
     </div>
   );

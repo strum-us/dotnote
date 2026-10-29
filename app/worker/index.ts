@@ -747,9 +747,8 @@ authed.route("/update", updateRoutes);
 
 app.route("/api", authed);
 
-app.all("*", async (c) => {
-  return c.env.ASSETS.fetch(c.req.raw);
-});
+/** Dotnote HTTP API (no static assets; Next/OpenNext serves the UI). */
+export const apiApp = app;
 
 export default {
   fetch: app.fetch,

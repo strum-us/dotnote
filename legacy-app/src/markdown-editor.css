@@ -1,0 +1,33 @@
+.gtm-md-editor .bn-editor {
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.625;
+  background: transparent;
+}
+
+.gtm-md-editor .bn-container {
+  background: transparent;
+}
+
+/* Keeps the AI bar's target visibly selected while focus is in its input. */
+::highlight(dotnote-ai-target) {
+  background-color: color-mix(in srgb, var(--accent-color) 22%, transparent);
+}
+
+/* BlockNote's shadcn tooltip is styled with Tailwind classes that live only in
+   node_modules (bg-primary, text-primary-foreground, fill-primary). Those
+   utilities are never generated, so the bubble has no background and the
+   shortcut sits on the note text. Paint it here. */
+[data-slot="tooltip-content"] {
+  background-color: var(--ink);
+  color: var(--well);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 22%);
+}
+
+[data-slot="tooltip-content"] svg {
+  fill: var(--ink);
+}

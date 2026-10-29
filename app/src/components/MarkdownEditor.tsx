@@ -14,7 +14,7 @@ import { stripAiJobImages } from "@/lib/ai-job-markdown";
 import { collectTransferFiles, transferHasFiles } from "@/lib/image-optimize";
 import { resolveMarkdownAssetHref } from "@/lib/page-assets-client";
 import { pathForNoteId } from "@/lib/search-nav";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "@/lib/next-router-compat";
 import { aiSettingsImagePath, aiSettingsTextPath } from "@/routes/paths";
 import {
   ingestPageFile,

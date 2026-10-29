@@ -1,3 +1,4 @@
 packages:
   - app
+  - legacy-app
   - installer

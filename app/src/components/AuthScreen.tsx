@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "@/lib/next-router-compat";
 import { observer } from "mobx-react-lite";
 import { authStore } from "@/stores/auth-store";
 import { DotnoteMark } from "@/components/DotnoteMark";

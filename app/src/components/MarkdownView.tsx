@@ -41,13 +41,18 @@ export const MarkdownView = observer(function MarkdownView(props: MarkdownViewPr
   const components = useMemo(
     () => ({
       img: ({ src, alt, ...rest }: MarkdownImgProps) => (
-        <img src={resolveMediaSrc(props, src)} alt={alt ?? ""} loading="lazy" {...rest} />
+        <img
+          src={resolveMediaSrc(props, typeof src === "string" ? src : undefined)}
+          alt={alt ?? ""}
+          loading="lazy"
+          {...rest}
+        />
       ),
       video: ({ src, ...rest }: ComponentProps<"video">) => (
-        <video controls src={resolveMediaSrc(props, src)} {...rest} />
+        <video controls src={resolveMediaSrc(props, typeof src === "string" ? src : undefined)} {...rest} />
       ),
       audio: ({ src, ...rest }: ComponentProps<"audio">) => (
-        <audio controls src={resolveMediaSrc(props, src)} {...rest} />
+        <audio controls src={resolveMediaSrc(props, typeof src === "string" ? src : undefined)} {...rest} />
       ),
       a: ({ href, children, ...rest }: ComponentProps<"a">) => {
         const resolved = href ? resolveMediaSrc(props, href) : href;

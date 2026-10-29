@@ -14,7 +14,14 @@ function normalizePath(pathname: string): string {
 }
 
 function isReservedAppPath(path: string): boolean {
-  return path === "/settings" || path.startsWith("/settings/") || path.startsWith("/s/");
+  return (
+    path === "/settings" ||
+    path.startsWith("/settings/") ||
+    path.startsWith("/s/") ||
+    path === "/login" ||
+    path === "/createaccount" ||
+    path.startsWith("/entry-sample")
+  );
 }
 
 export function parseNotePath(pathname: string): ParsedNotePath | null {

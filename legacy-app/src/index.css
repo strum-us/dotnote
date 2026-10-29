@@ -1,0 +1,178 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --canvas: #eceff3;
+    --sidebar: #f7f8fa;
+    --panel: #f3f5f8;
+    --panel-header: #eceff4;
+    --well: #ffffff;
+    --tab-active-surface: var(--well);
+    --raised: #e6ebf2;
+    --raised-hover: #dce3ec;
+    --raised-active: #d1dbe7;
+    --divider: #cfd6df;
+    --ink: #111827;
+    --ink-secondary: #475569;
+    --dim: #6b7280;
+    --accent-color: #2563eb;
+    --accent-muted: #3b82f6;
+    --accent-hover: #1d4ed8;
+    --accent-selected: #1e40af;
+    --accent-on: #eff6ff;
+    --danger: #dc2626;
+    --background: #ffffff;
+    --foreground: #111827;
+    --border: #cfd6df;
+    --muted: #eceff3;
+    --muted-foreground: #6b7280;
+    --primary: #2563eb;
+    --primary-foreground: #ffffff;
+    --popover: var(--panel);
+    --popover-foreground: var(--ink);
+    --accent: var(--raised);
+    --accent-foreground: var(--ink);
+  }
+
+  html.dark {
+    color-scheme: dark;
+    --canvas: #0f0f0f;
+    --sidebar: #151515;
+    --panel: #191919;
+    --panel-header: #1f1f1f;
+    --well: #121212;
+    --tab-active-surface: var(--well);
+    --raised: #242424;
+    --raised-hover: #2e2e2e;
+    --raised-active: #1e1e1e;
+    --divider: #262626;
+    --ink: #f0f0f0;
+    --ink-secondary: #b8b8b8;
+    --dim: #7c7c7c;
+    --accent-color: #60a5fa;
+    --accent-hover: #93c5fd;
+    --accent-selected: #2563eb;
+    --accent-on: #0b1220;
+    --danger: #ef4444;
+    --background: #121212;
+    --foreground: #f0f0f0;
+    --border: #262626;
+    --muted: #191919;
+    --muted-foreground: #7c7c7c;
+    --primary: #60a5fa;
+    --primary-foreground: #0b1220;
+    --popover: var(--panel);
+    --popover-foreground: var(--ink);
+    --accent: var(--raised);
+    --accent-foreground: var(--ink);
+  }
+
+  * {
+    border-color: var(--divider);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--dim) 45%, transparent) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--dim) 55%, var(--raised));
+    border: 1px solid var(--divider);
+    border-radius: 0;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family:
+      "Segoe UI",
+      "SF Pro Text",
+      -apple-system,
+      BlinkMacSystemFont,
+      system-ui,
+      sans-serif;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-sidebar: var(--sidebar);
+  --color-panel: var(--panel);
+  --color-panel-header: var(--panel-header);
+  --color-well: var(--well);
+  --color-raised: var(--raised);
+  --color-raised-hover: var(--raised-hover);
+  --color-raised-active: var(--raised-active);
+  --color-divider: var(--divider);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-dim: var(--dim);
+  --color-accent-color: var(--accent-color);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-selected: var(--accent-selected);
+  --color-accent-on: var(--accent-on);
+  --color-danger: var(--danger);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+}
+
+@utility text-compact {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.pro-panel {
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: 0.125rem;
+  background: var(--panel);
+}
+
+.pro-panel-header {
+  display: flex;
+  height: 2rem;
+  flex-shrink: 0;
+  align-items: center;
+  border-bottom: 1px solid var(--divider);
+  background: var(--panel-header);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.pro-dock-tab-active {
+  background: var(--tab-active-surface);
+  color: var(--ink);
+}

@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowUpCircle, Cloud, Image, Info, Sparkles, UserRound } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { NavLink } from "@/lib/next-router-compat";
 
 import { cn } from "@/lib/utils";
 import { settingsPath, type SettingsSection } from "@/routes/paths";

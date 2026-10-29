@@ -18,7 +18,7 @@ sidebar (updateStore)        Dotnote Worker (old)          installer           C
 
 ## Releases
 
-`scripts/pack-release.mjs` writes `installer/public/release/`:
+`scripts/pack-release.mjs` runs `pnpm --filter dotnote-app run build:cf`, then writes `installer/public/release/` (static files from `app/.open-next/assets/`):
 
 | Path | What |
 |---|---|
