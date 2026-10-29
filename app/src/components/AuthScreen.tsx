@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { observer } from "mobx-react-lite";
 import { authStore } from "@/stores/auth-store";
 import { DotnoteMark } from "@/components/DotnoteMark";
@@ -29,10 +29,18 @@ export const AuthScreen = observer(function AuthScreen() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const authPath = useLocation().pathname;
+  const navigate = useNavigate();
 
   useEffect(() => {
     void authStore.loadSetup();
+    void authStore.bootstrap();
   }, []);
+
+  useEffect(() => {
+    if (!authStore.user) return;
+    if (authPath !== AUTH_LOGIN_PATH && !isAuthCreatePath(authPath)) return;
+    navigate("/", { replace: true });
+  }, [authStore.user, authPath, navigate]);
 
   const setup = authStore.setup;
   const creating = isAuthCreatePath(authPath);
