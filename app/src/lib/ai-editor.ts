@@ -48,10 +48,24 @@ function imageTargetFromBlock(block: AnyBlock | undefined, document: string): Ai
   return { kind: "image", blockId: block.id, url, name: name || "image", document };
 }
 
+function blockAtCursor(editor: Editor): AnyBlock | undefined {
+  try {
+    return editor.getTextCursorPosition().block;
+  } catch {
+    return undefined;
+  }
+}
+
 export function captureAiTarget(editor: Editor): AiTarget | null {
   const state = editor.prosemirrorState;
   const { selection } = state;
   const document = stripAiJobImages(trimMarkdown(editor.blocksToMarkdownLossy(editor.document)));
+
+  // Clicking an image selects the block node, not a text range. BlockNote's
+  // getSelection() ignores node selections, so Ask AI used to no-op here.
+  if ("node" in selection) {
+    return imageTargetFromBlock(blockAtCursor(editor), document);
+  }
 
   if (!selection.empty) {
     const selected = editor.getSelection()?.blocks ?? [];
@@ -60,13 +74,7 @@ export function captureAiTarget(editor: Editor): AiTarget | null {
       if (image) return image;
     }
   } else {
-    let cursorBlock: AnyBlock | undefined;
-    try {
-      cursorBlock = editor.getTextCursorPosition().block;
-    } catch {
-      cursorBlock = undefined;
-    }
-    const image = imageTargetFromBlock(cursorBlock, document);
+    const image = imageTargetFromBlock(blockAtCursor(editor), document);
     if (image) return image;
   }
 

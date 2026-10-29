@@ -10,16 +10,25 @@ function AiToolbarButton() {
   const open = useContext(AiOpenContext);
   if (!open) return null;
   return (
-    <Components.FormattingToolbar.Button
-      className="bn-button gap-1 px-2 font-medium text-accent-color"
-      label="Ask AI"
-      mainTooltip="Ask AI"
-      secondaryTooltip="⌘J"
-      icon={<Sparkles className="size-3.5" />}
-      onClick={open}
+    <span
+      className="inline-flex"
+      onMouseDown={(event) => {
+        // A toolbar mousedown would move focus and drop the image node selection
+        // before Ask AI reads it.
+        event.preventDefault();
+      }}
     >
-      Ask AI
-    </Components.FormattingToolbar.Button>
+      <Components.FormattingToolbar.Button
+        className="bn-button gap-1 px-2 font-medium text-accent-color"
+        label="Ask AI"
+        mainTooltip="Ask AI"
+        secondaryTooltip="⌘J"
+        icon={<Sparkles className="size-3.5" />}
+        onClick={open}
+      >
+        Ask AI
+      </Components.FormattingToolbar.Button>
+    </span>
   );
 }
 
