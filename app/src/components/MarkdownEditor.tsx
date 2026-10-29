@@ -12,6 +12,7 @@ import { useImageSettings } from "@/hooks/useImageSettings";
 import { captureAiTarget, restoreSelection, type AiTarget } from "@/lib/ai-editor";
 import { stripAiJobImages } from "@/lib/ai-job-markdown";
 import { collectTransferFiles, transferHasFiles } from "@/lib/image-optimize";
+import { authedObjectUrl } from "@/lib/api-origin";
 import { resolveMarkdownAssetHref } from "@/lib/page-assets-client";
 import { pathForNoteId } from "@/lib/search-nav";
 import { useNavigate } from "react-router-dom";
@@ -145,7 +146,13 @@ const BlockEditor = observer(function BlockEditor({
     resolveFileUrl: async (url) => {
       if (/^(https?:|data:|blob:)/i.test(url)) return url;
       const href = resolveMarkdownAssetHref(workspaceIdRef.current, notePathRef.current, url);
-      return href ?? url;
+      if (!href) return url;
+      if (!import.meta.env.VITE_API_ORIGIN) return href;
+      try {
+        return await authedObjectUrl(href);
+      } catch {
+        return href;
+      }
     },
     pasteHandler: ({ event, editor: pasteEditor, defaultPasteHandler }) => {
       const files = collectTransferFiles(event.clipboardData);

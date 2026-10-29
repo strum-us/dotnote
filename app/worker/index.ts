@@ -82,7 +82,8 @@ app.use(
     cors({
     origin: (origin) => origin ?? "*",
     credentials: true,
-    allowHeaders: ["Content-Type"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    exposeHeaders: ["X-Dotnote-Session"],
   }),
 );
 

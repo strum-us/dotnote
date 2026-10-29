@@ -2,6 +2,12 @@
 
 **Your notes. Your cloud. Your AI key.**
 
+[Website](https://dotnote.cloud) · [Try the demo](https://strum-us.github.io/dotnote-demo/entry-sample)
+
+<video src="https://github.com/strum-us/dotnote/raw/main/docs/media/dotnote-intro-light.mp4" poster="docs/media/dotnote-intro-light-poster.jpg" width="100%" controls playsinline></video>
+
+[![Dotnote](docs/media/dotnote-intro-light-poster.jpg)](https://github.com/strum-us/dotnote/raw/main/docs/media/dotnote-intro-light.mp4)
+
 Dotnote is a local-first markdown notes app that runs in **your own Cloudflare account**. Your notes are plain `.md` files in your R2 bucket — no notes cloud operated by us, no per-seat subscription, no proprietary vault format.
 
 > Dotnote is **source-available** under the [Sustainable Use License 1.0](./LICENSE.md) (fair-code, not OSI open source). Personal and internal company use is free. See [License](#license) below and [docs/license-faq.md](./docs/license-faq.md).

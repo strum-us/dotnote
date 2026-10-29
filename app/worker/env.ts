@@ -25,6 +25,11 @@ export type Env = {
   /** Origin of the deploy page, used to send the user back to reconnect and to fetch releases. */
   INSTALLER_ORIGIN?: string;
   /**
+   * Comma-separated origins allowed to hold a session from another site.
+   * Used by the GitHub Pages demo. Unset on every other deployment.
+   */
+  CROSS_SITE_ORIGINS?: string;
+  /**
    * Release version, bound by the installer and the self-updater so the dashboard shows it.
    * Code trusts BUILD_VERSION (worker/update/version.ts) instead, which cannot go stale.
    */

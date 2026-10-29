@@ -30,6 +30,11 @@ function EntrySampleRoute() {
   return <EntrySamplePage hint={hint} />;
 }
 
+function routerBasename(): string | undefined {
+  const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+  return base.length > 0 ? base : undefined;
+}
+
 export const appRouter = createBrowserRouter([
   { path: "/s/:token", element: <PublicShareRoute /> },
   { path: "/entry-sample", element: <EntrySampleRoute /> },
@@ -66,4 +71,4 @@ export const appRouter = createBrowserRouter([
       { index: true, element: <WorkspaceRoute /> },
     ],
   },
-]);
+], { basename: routerBasename() });

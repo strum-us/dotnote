@@ -18,6 +18,7 @@ import type {
 } from "@shared/types";
 import type { DiagnosticsStatus } from "@shared/diagnostics";
 import type { AiLogPeriod, AiLogsResponse, LlmSettingsView, UpdateLlmSettings } from "@shared/llm";
+import { apiFetch } from "@/lib/api-origin";
 
 export type { TreeNode };
 
@@ -33,9 +34,8 @@ export class ApiError extends Error {
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     ...init,
-    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
@@ -146,9 +146,8 @@ export const assetApi = {
     mimeType?: string,
   ) => {
     const params = new URLSearchParams({ notePath, filename });
-    const res = await fetch(`/api/workspaces/${workspaceId}/assets/raw?${params}`, {
+    const res = await apiFetch(`/api/workspaces/${workspaceId}/assets/raw?${params}`, {
       method: "PUT",
-      credentials: "include",
       headers: { "Content-Type": mimeType || body.type || "application/octet-stream" },
       body,
     });
@@ -233,7 +232,7 @@ export const noteApi = {
 };
 
 export async function publicShareGet(token: string): Promise<PublicSharePayload> {
-  const res = await fetch(`/api/public/shares/${encodeURIComponent(token)}`);
+  const res = await apiFetch(`/api/public/shares/${encodeURIComponent(token)}`);
   const text = await res.text();
   if (!res.ok) throw new ApiError(res.status, parseErrorBody(text));
   return JSON.parse(text) as PublicSharePayload;

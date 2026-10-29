@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api-origin";
 import { blobToBase64 } from "@/lib/image-optimize";
 import { resolveMarkdownAssetHref } from "@/lib/page-assets-client";
 import { isImageInputMimeType, type AiSourceImagePayload } from "@shared/llm";
@@ -45,7 +46,7 @@ async function fetchSourceBlob(opts: { url: string; workspaceId: string; notePat
   }
   const href = resolveMarkdownAssetHref(opts.workspaceId, opts.notePath, opts.url);
   if (!href) throw new Error("Could not load this image.");
-  const res = await fetch(href, { credentials: "include" });
+  const res = await apiFetch(href);
   if (!res.ok) throw new Error("Could not load this image.");
   return res.blob();
 }

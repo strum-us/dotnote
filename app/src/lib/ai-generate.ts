@@ -1,5 +1,6 @@
 import type { LlmStreamEvent } from "@shared/llm";
 import { ApiError } from "@/lib/api";
+import { apiFetch } from "@/lib/api-origin";
 
 export type AiTurn = { instruction: string; output?: string };
 
@@ -19,9 +20,8 @@ export async function generateAi(
   onText: (textSoFar: string) => void,
   signal: AbortSignal,
 ): Promise<string> {
-  const res = await fetch("/api/llm/generate", {
+  const res = await apiFetch("/api/llm/generate", {
     method: "POST",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,

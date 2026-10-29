@@ -1,4 +1,5 @@
 import { resolveMarkdownAssetPath } from "@shared/page-assets";
+import { apiUrl } from "@/lib/api-origin";
 
 export {
   classifyPageFile,
@@ -13,7 +14,7 @@ export {
 
 export function assetApiUrl(workspaceId: string, relativePath: string): string {
   const params = new URLSearchParams({ path: relativePath });
-  return `/api/workspaces/${encodeURIComponent(workspaceId)}/assets?${params}`;
+  return apiUrl(`/api/workspaces/${encodeURIComponent(workspaceId)}/assets?${params}`);
 }
 
 export function resolveMarkdownAssetHref(

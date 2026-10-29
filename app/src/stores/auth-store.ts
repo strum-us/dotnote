@@ -1,6 +1,7 @@
 import { makeAutoObservable, runInAction } from "mobx";
 import type { DiagnosticsStatus } from "@shared/diagnostics";
 import type { AuthSetup, User } from "@shared/types";
+import { clearCrossSiteSession } from "@/lib/api-origin";
 import { ApiError, authApi } from "@/lib/api";
 
 const USER_KEY = "dotnote-user-v2";
@@ -234,6 +235,7 @@ class AuthStore {
     writeCachedUser(null);
     this.user = null;
     await authApi.logout().catch(() => {});
+    clearCrossSiteSession();
   }
 }
 

@@ -1,4 +1,5 @@
 import type { User } from "@shared/types";
+import { apiFetch } from "@/lib/api-origin";
 
 export class EntrySampleError extends Error {
   status: number;
@@ -15,9 +16,8 @@ export type EntrySampleEnterResponse = {
 };
 
 export async function entrySampleEnter(): Promise<EntrySampleEnterResponse> {
-  const res = await fetch("/api/entry-sample/enter", {
+  const res = await apiFetch("/api/entry-sample/enter", {
     method: "POST",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
   });
   const text = await res.text();

@@ -7,7 +7,7 @@
       (function(){var k="dotnote-theme";var d=document.documentElement;function sys(){return window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}function apply(mode){var r=mode==="system"?sys():mode;d.classList.toggle("dark",r==="dark");d.style.colorScheme=r;}try{var s=localStorage.getItem(k);var m=s==="light"||s==="dark"||s==="system"?s:"system";apply(m);}catch(e){apply("system");}})();
     </script>
     <title>Dotnote</title>
-    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="icon" href="%BASE_URL%logo.svg" type="image/svg+xml" />
   </head>
   <body>
     <div id="root"></div>

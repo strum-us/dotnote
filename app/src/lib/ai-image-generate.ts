@@ -1,5 +1,6 @@
 import type { AiImageGenerateResponse, AiSourceImagePayload } from "@shared/llm";
 import { ApiError } from "@/lib/api";
+import { apiFetch } from "@/lib/api-origin";
 
 export type AiImageGenerateRequest = {
   prompt: string;
@@ -9,9 +10,8 @@ export type AiImageGenerateRequest = {
 };
 
 export async function generateAiImage(body: AiImageGenerateRequest, signal: AbortSignal): Promise<AiImageGenerateResponse> {
-  const res = await fetch("/api/llm/images/generate", {
+  const res = await apiFetch("/api/llm/images/generate", {
     method: "POST",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal,
