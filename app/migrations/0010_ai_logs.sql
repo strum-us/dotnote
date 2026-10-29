@@ -1,4 +1,4 @@
--- @since 0.3.0
+-- @since 0.2.10
 CREATE TABLE IF NOT EXISTS ai_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
